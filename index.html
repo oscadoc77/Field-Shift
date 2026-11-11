@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Field Shift: crop-rotation explorer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Public+Sans:wght@400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Field Shift</h1>
+      <p>Explore crop rotations with NASA Earth data</p>
+    </div>
+    <span class="demo-flag">Demo data</span>
+  </header>
+
+  <main class="layout">
+    <aside class="controls" aria-label="Your field and priorities">
+      <section class="step">
+        <h2><span class="num">1</span>Pick your field</h2>
+        <p class="hint">Click the map to place a marker on your field.</p>
+        <button id="locate" class="btn btn-ghost" type="button">Use my location</button>
+        <p id="coords" class="coords" aria-live="polite">No field selected yet.</p>
+      </section>
+
+      <section class="step">
+        <h2><span class="num">2</span>Your current rotation</h2>
+        <label for="current">What do you grow today?</label>
+        <select id="current"></select>
+      </section>
+
+      <section class="step">
+        <h2><span class="num">3</span>What matters most?</h2>
+        <div id="priorities"></div>
+        <label for="water">Water available for the field</label>
+        <select id="water">
+          <option value="low">Limited</option>
+          <option value="medium" selected>Moderate</option>
+          <option value="high">Plenty</option>
+        </select>
+      </section>
+
+      <button id="compare" class="btn" type="button">Compare rotations</button>
+      <p id="formError" class="error" role="alert"></p>
+    </aside>
+
+    <div id="map" class="map" aria-label="Map for choosing your field"></div>
+
+    <section id="results" class="results" tabindex="-1" aria-label="Rotation comparison">
+      <div class="empty">
+        <p>Choose your field on the map, set what matters most to you, then select Compare rotations. You will see your current rotation next to two alternatives.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Field Shift supports your decisions and does not replace your own judgment or local agricultural advice. Scores use demo values until live NASA data is connected.</p>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
