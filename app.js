@@ -114,6 +114,7 @@ const ROTATIONS = [
 ];
 
 const WATER_FACTOR = { low: 1.5, medium: 1, high: 0.8 };
+const WATER_LABEL = { low: "Limited", medium: "Moderate", high: "Plenty" };
 
 /* ---------- 2) Field conditions (live NASA POWER + estimates) ---------- */
 async function getConditions(lat, lon) {
@@ -123,12 +124,17 @@ async function getConditions(lat, lon) {
     if (!resp.ok) throw new Error(`NASA POWER request failed ${resp.status}`);
     const json = await resp.json();
     const params = json?.properties?.parameter;
-    const annual = (obj) => Number(obj?.['Annual Average'] ?? obj?.['Mean'] ?? obj?.[Object.keys(obj)[0]]);
-    const rainMm = annual(params.PRECTOTCORR);
-    const tempC = annual(params.T2M);
+    // POWER climatology returns JAN..DEC plus ANN (the annual value).
+    const annual = (obj) => Number(obj?.ANN);
+    const tempC = annual(params?.T2M);
+    const rainMm = annual(params?.PRECTOTCORR) * 365; // POWER reports precipitation in mm/day
+    if (!Number.isFinite(tempC) || !Number.isFinite(rainMm) || tempC < -900 || rainMm < 0) {
+      throw new Error("Unexpected NASA POWER response"); // -999 is POWER's missing-data value
+    }
+    // Soil moisture and NDVI are rough estimates from rainfall and temperature, not NASA measurements.
     const soilMoisture = Math.min(0.45, Math.max(0.05, (rainMm / 2500) * (1 - (tempC - 10) / 60)));
     const ndvi = Math.min(0.85, Math.max(0.1, (rainMm / 1800) * (1 - Math.abs(tempC - 22) / 40)));
-    return { demo: false, tempC, rainMm, soilMoisture: +soilMoisture.toFixed(2), ndvi: +ndvi.toFixed(2) };
+    return { demo: false, tempC: +tempC.toFixed(1), rainMm: Math.round(rainMm), soilMoisture: +soilMoisture.toFixed(2), ndvi: +ndvi.toFixed(2) };
   } catch (e) {
     console.warn('Failed to fetch NASA POWER data, using demo values', e);
     return { demo: true, tempC: 21.4, rainMm: 640, soilMoisture: 0.24, ndvi: 0.52 };
@@ -185,13 +191,16 @@ function initMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
-  const ndviLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day_500m/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', {
+  // GIBS gives map images (not numbers). Level9 tiles stop at zoom 9, hence maxNativeZoom.
+  const ndviLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png', {
     attribution: 'NASA GIBS MODIS NDVI',
-    opacity: 0.5,
+    opacity: 0.6,
+    maxNativeZoom: 9,
   });
-  const smapLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/SMAP_L3_SM_P_Grid_9km/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', {
+  const smapLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/SMAP_L3_Passive_Enhanced_Day_Soil_Moisture/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png', {
     attribution: 'NASA GIBS SMAP Soil Moisture',
-    opacity: 0.5,
+    opacity: 0.6,
+    maxNativeZoom: 9,
   });
   L.control.layers(null, {
     'NDVI (8\u2011day)': ndviLayer,
@@ -324,12 +333,12 @@ function renderResults(cond, items, w) {
 
   const statusPill = cond.demo
     ? '<span class="pill-demo">\u26A0 Demo values</span>'
-    : '<span class="pill-live">\u2713 Live NASA data</span>';
+    : '<span class="pill-live">\u2713 NASA POWER data (soil moisture and NDVI estimated)</span>';
 
   $("results").innerHTML = `
     <!-- Dashboard Header -->
     <div class="dash-header">
-      <h2>Field Shift Dashboard</h2>
+      <h2>${headline}</h2>
       <div class="dash-status">${statusPill}</div>
     </div>
 
@@ -341,7 +350,7 @@ function renderResults(cond, items, w) {
         <div class="detail-row"><span class="detail-label">Latitude</span><span class="detail-value">${lat}</span></div>
         <div class="detail-row"><span class="detail-label">Longitude</span><span class="detail-value">${lng}</span></div>
         <div class="detail-row"><span class="detail-label">Current Rotation</span><span class="detail-value">${items[0].rot.name}</span></div>
-        <div class="detail-row"><span class="detail-label">Water Available</span><span class="detail-value">${$("water").value}</span></div>
+        <div class="detail-row"><span class="detail-label">Water Available</span><span class="detail-value">${WATER_LABEL[$("water").value]}</span></div>
         <div class="detail-row"><span class="detail-label">Best Fit</span><span class="detail-value" style="color:var(--leaf)">${best.rot.name}</span></div>
       </div>
 
@@ -395,8 +404,8 @@ function renderResults(cond, items, w) {
         <div class="chart-container"><canvas id="radarChart"></canvas></div>
       </div>
       <div class="chart-card">
-        <h3>Score Breakdown (Donut)</h3>
-        <div class="chart-container"><canvas id="donutChart"></canvas></div>
+        <h3>Fit Score Comparison (Bar)</h3>
+        <div class="chart-container"><canvas id="barChart"></canvas></div>
       </div>
     </div>
 
@@ -412,6 +421,7 @@ function renderResults(cond, items, w) {
 
 /* ---------- Charts ---------- */
 function buildCharts(items) {
+  if (typeof Chart === "undefined") return; // Chart.js CDN did not load: keep the rest of the results working
   const labels = CRITERIA.map(c => c.label);
   const colors = ['#7a4a22', '#1f7a3d', '#1f5f9e'];
   const bgColors = ['rgba(122,74,34,0.15)', 'rgba(31,122,61,0.15)', 'rgba(31,95,158,0.15)'];
@@ -435,16 +445,16 @@ function buildCharts(items) {
       },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
+        maintainAspectRatio: false,
         plugins: {
-          legend: { position: 'bottom', labels: { font: { size: 11, family: 'Public Sans' }, usePointStyle: true } },
+          legend: { position: window.innerWidth > 1100 ? 'right' : 'bottom', labels: { font: { size: 12, family: 'Public Sans' }, usePointStyle: true } },
         },
         scales: {
           r: {
             beginAtZero: true,
             max: 5,
             ticks: { stepSize: 1, font: { size: 10 } },
-            pointLabels: { font: { size: 11, family: 'Public Sans', weight: '600' } },
+            pointLabels: { font: { size: 12, family: 'Public Sans', weight: '600' } },
             grid: { color: 'rgba(0,0,0,0.06)' },
           },
         },
@@ -453,39 +463,33 @@ function buildCharts(items) {
     state.charts.push(radarChart);
   }
 
-  // Donut Chart
-  const donutCtx = document.getElementById('donutChart');
-  if (donutCtx) {
-    const donutChart = new Chart(donutCtx, {
-      type: 'doughnut',
+  // Bar Chart
+  const barCtx = document.getElementById('barChart');
+  if (barCtx) {
+    const barChart = new Chart(barCtx, {
+      type: 'bar',
       data: {
-        labels: items.map(item => item.isCurrent ? `Current` : item.rot.name.split('\u2192').pop().trim()),
+        labels: items.map(item => item.isCurrent ? 'Current' : item.rot.name.split('\u2192').pop().trim()),
         datasets: [{
           data: items.map(item => item.score),
           backgroundColor: colors,
-          borderColor: '#fff',
-          borderWidth: 3,
-          hoverOffset: 8,
+          borderRadius: 6,
         }],
       },
       options: {
         responsive: true,
-        maintainAspectRatio: true,
-        cutout: '60%',
+        maintainAspectRatio: false,
         plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { font: { size: 12, family: 'Public Sans' }, usePointStyle: true, padding: 16 },
-          },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => ` ${ctx.label}: ${ctx.parsed} / 100`,
-            },
-          },
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => ` ${ctx.parsed.y} / 100` } },
+        },
+        scales: {
+          y: { min: 0, max: 100, ticks: { stepSize: 20 }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          x: { grid: { display: false }, ticks: { font: { family: 'Public Sans', weight: '600' } } },
         },
       },
     });
-    state.charts.push(donutChart);
+    state.charts.push(barChart);
   }
 }
 

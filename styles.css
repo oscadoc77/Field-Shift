@@ -10,8 +10,6 @@
   --wheat: #c9a227;
   --sky: #1f5f9e;
   --alert: #a8271c;
-  --blue: #2196F3;
-  --orange: #FF9800;
   --teal: #009688;
   --ndvi: linear-gradient(90deg, #7a4a22 0%, #c9a227 35%, #7cb342 70%, #1b7a3a 100%);
   --display: "Bricolage Grotesque", system-ui, sans-serif;
@@ -356,7 +354,7 @@ output { font-weight: 700; color: var(--leaf-dk); }
 .chart-container {
   position: relative;
   width: 100%;
-  max-height: 280px;
+  height: 380px;
 }
 
 /* --- Notice --- */
@@ -371,15 +369,7 @@ output { font-weight: 700; color: var(--leaf-dk); }
 }
 
 /* --- Section Title --- */
-.headline { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.01em; margin: 0 0 14px; }
 .section-title { display: flex; align-items: center; gap: 10px; font-size: 1.2rem; margin: 26px 0 10px; }
-.pill {
-  font: 600 0.75rem var(--body);
-  border: 1.5px solid var(--wheat);
-  color: #6d5600;
-  border-radius: 999px;
-  padding: 1px 9px;
-}
 
 /* --- Comparison columns --- */
 .compare {
@@ -473,6 +463,7 @@ output { font-weight: 700; color: var(--leaf-dk); }
   .layout { grid-template-columns: minmax(0, 1fr); }
   .map { min-height: 320px; }
   .rings-row { gap: 12px; }
+  .chart-container { height: 320px; }
   .ring-wrap { width: 70px; height: 70px; }
   .ring-wrap svg { width: 70px; height: 70px; }
   .ring-number { font-size: 1rem; }
