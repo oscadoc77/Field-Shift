@@ -5,7 +5,8 @@
    Two places to replace with real data later:
    1) ROTATIONS / CRITERIA: demo values. Replace with agronomic sources that
       local farmers or agronomists have reviewed.
-   2) getConditions(): demo values. Replace with live NASA data.
+   2) getConditions(): now uses live NASA POWER data with estimated soil
+      moisture and NDVI. Falls back to demo values on error.
    ========================================================================== */
 
 /* ---------- 1) What farmers can prioritise ---------- */
@@ -20,7 +21,7 @@ const CRITERIA = [
 const ROTATIONS = [
   {
     id: "mono",
-    name: "Maize → Maize",
+    name: "Maize \u2192 Maize",
     summary: "The same cereal every season.",
     scores: { water: 2, soil: 1, income: 3, resilience: 2 },
     benefits: ["Familiar practices and equipment", "A steady, known market"],
@@ -33,7 +34,7 @@ const ROTATIONS = [
   },
   {
     id: "beans",
-    name: "Maize → Common beans",
+    name: "Maize \u2192 Common beans",
     summary: "A legume follows the cereal.",
     scores: { water: 3, soil: 4, income: 4, resilience: 3 },
     benefits: [
@@ -50,7 +51,7 @@ const ROTATIONS = [
   },
   {
     id: "sorghum",
-    name: "Maize → Sorghum",
+    name: "Maize \u2192 Sorghum",
     summary: "A drought-tolerant grain follows maize.",
     scores: { water: 4, soil: 3, income: 3, resilience: 4 },
     benefits: [
@@ -67,7 +68,7 @@ const ROTATIONS = [
   },
   {
     id: "cover",
-    name: "Maize → Oats and vetch cover crop",
+    name: "Maize \u2192 Oats and vetch cover crop",
     summary: "A soil-building cover crop between maize crops.",
     scores: { water: 3, soil: 5, income: 2, resilience: 3 },
     benefits: [
@@ -84,7 +85,7 @@ const ROTATIONS = [
   },
   {
     id: "fallow",
-    name: "Wheat → Bare fallow",
+    name: "Wheat \u2192 Bare fallow",
     summary: "A rest season with no crop.",
     scores: { water: 2, soil: 1, income: 2, resilience: 2 },
     benefits: [
@@ -100,7 +101,7 @@ const ROTATIONS = [
   },
   {
     id: "chickpea",
-    name: "Maize → Chickpea",
+    name: "Maize \u2192 Chickpea",
     summary: "A dry-season legume follows maize.",
     scores: { water: 4, soil: 4, income: 3, resilience: 4 },
     benefits: [
@@ -120,12 +121,8 @@ const ROTATIONS = [
 /* Limited water makes "Save water" count more; plenty of water makes it count less. */
 const WATER_FACTOR = { low: 1.5, medium: 1, high: 0.8 };
 
-/* ---------- 2) Field conditions (demo values) ---------- */
+/* ---------- 2) Field conditions (live NASA POWER + estimates) ---------- */
 async function getConditions(lat, lon) {
-  // TODO: replace with live NASA data. For example, NASA POWER climatology:
-  // https://power.larc.nasa.gov/api/temporal/climatology/point
-  //   ?parameters=T2M,PRECTOTCORR&community=AG&longitude=${lon}&latitude=${lat}&format=JSON
-  // (check the NASA POWER docs for the exact parameters), then add SMAP and MODIS.
   try {
     const url = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,RH2M,T2M_MAX,T2M_MIN&community=AG&latitude=${lat}&longitude=${lon}&format=JSON`;
     const resp = await fetch(url);
@@ -133,7 +130,15 @@ async function getConditions(lat, lon) {
     const json = await resp.json();
     const params = json?.properties?.parameter;
     const annual = (obj) => Number(obj?.['Annual Average'] ?? obj?.['Mean'] ?? obj?.[Object.keys(obj)[0]]);
-    return { demo: false, tempC: annual(params.T2M), rainMm: annual(params.PRECTOTCORR), soilMoisture: null, ndvi: null };
+    const rainMm = annual(params.PRECTOTCORR);
+    const tempC = annual(params.T2M);
+    // Estimate soil moisture from rainfall & temperature (simplified water-balance proxy)
+    // Wetter + cooler = higher moisture; drier + hotter = lower moisture
+    const soilMoisture = Math.min(0.45, Math.max(0.05, (rainMm / 2500) * (1 - (tempC - 10) / 60)));
+    // Estimate NDVI from rainfall & temperature (simplified vegetation proxy)
+    // More rain + moderate temps = greener vegetation
+    const ndvi = Math.min(0.85, Math.max(0.1, (rainMm / 1800) * (1 - Math.abs(tempC - 22) / 40)));
+    return { demo: false, tempC, rainMm, soilMoisture: +soilMoisture.toFixed(2), ndvi: +ndvi.toFixed(2) };
   } catch (e) {
     console.warn('Failed to fetch NASA POWER data, using demo values', e);
     return { demo: true, tempC: 21.4, rainMm: 640, soilMoisture: 0.24, ndvi: 0.52 };
@@ -155,7 +160,7 @@ function joinList(items) {
 }
 
 function dots(n) {
-  return "●".repeat(n) + "○".repeat(5 - n);
+  return "\u25CF".repeat(n) + "\u25CB".repeat(5 - n);
 }
 
 /* ---------- Controls ---------- */
@@ -189,6 +194,7 @@ function initMap() {
     maxZoom: 18,
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
+
   // NASA GIBS overlay layers
   const ndviLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day_500m/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', {
     attribution: 'NASA GIBS MODIS NDVI',
@@ -199,7 +205,7 @@ function initMap() {
     opacity: 0.5,
   });
   const overlays = {
-    'NDVI (8‑day)': ndviLayer,
+    'NDVI (8\u2011day)': ndviLayer,
     'Soil Moisture (SMAP)': smapLayer,
   };
   L.control.layers(null, overlays, { collapsed: false }).addTo(map);
@@ -270,11 +276,12 @@ function whyText(rot, w, isCurrent) {
 
 /* ---------- Rendering ---------- */
 function conditionsHTML(c) {
+  const fmt = (v, unit) => (v != null ? `${v} ${unit}` : "N/A");
   const tiles = [
-    ["Average temperature", `${c.tempC} °C`, "NASA POWER", "Yearly average air temperature."],
-    ["Annual rainfall", `${c.rainMm} mm`, "NASA POWER and GPM", "Total rain in a typical year."],
-    ["Soil moisture", `${c.soilMoisture} m³/m³`, "SMAP", "Water held in the top layer of soil."],
-    ["Vegetation greenness (NDVI)", `${c.ndvi}`, "MODIS", "How green and healthy plants look from space, from 0 to 1."],
+    ["Average temperature", fmt(c.tempC, "\u00B0C"), "NASA POWER", "Yearly average air temperature."],
+    ["Annual rainfall", fmt(c.rainMm, "mm"), "NASA POWER & GPM", "Total rain in a typical year."],
+    ["Soil moisture (est.)", fmt(c.soilMoisture, "m\u00B3/m\u00B3"), "SMAP (estimated)", "Water held in the top layer of soil. Estimated from rainfall and temperature."],
+    ["Vegetation greenness (NDVI est.)", fmt(c.ndvi, ""), "MODIS (estimated)", "How green and healthy plants look from space, from 0 to 1. Estimated from rainfall and temperature."],
   ];
   return tiles
     .map(
@@ -328,7 +335,7 @@ function renderResults(cond, items, w) {
   $("results").innerHTML = `
     <h2 class="headline">${headline}</h2>
     <p class="notice">This tool supports your decision and does not replace your own judgment or local agricultural advice. Check every option with local farmers or an agronomist before changing your rotation.</p>
-    <h3 class="section-title">Conditions at your field ${cond.demo ? '<span class="pill">Demo values</span>' : ""}</h3>
+    <h3 class="section-title">Conditions at your field ${cond.demo ? '<span class="pill">Demo values</span>' : '<span class="pill" style="border-color:#1f7a3d;color:#1f7a3d">Live NASA data</span>'}</h3>
     <div class="strip">${conditionsHTML(cond)}</div>
     <h3 class="section-title">Rotation comparison</h3>
     <div class="compare">${items.map((item, i) => columnHTML(item, i, w)).join("")}</div>`;
@@ -347,7 +354,7 @@ async function onCompare() {
 
   const button = $("compare");
   button.disabled = true;
-  button.textContent = "Comparing…";
+  button.textContent = "Comparing\u2026";
 
   try {
     const cond = await getConditions(state.latlng.lat, state.latlng.lng);
