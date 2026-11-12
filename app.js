@@ -1,12 +1,7 @@
 "use strict";
 
 /* ==========================================================================
-   Field Shift: front-end prototype
-   Two places to replace with real data later:
-   1) ROTATIONS / CRITERIA: demo values. Replace with agronomic sources that
-      local farmers or agronomists have reviewed.
-   2) getConditions(): now uses live NASA POWER data with estimated soil
-      moisture and NDVI. Falls back to demo values on error.
+   Field Shift: front-end prototype with dashboard-style results
    ========================================================================== */
 
 /* ---------- 1) What farmers can prioritise ---------- */
@@ -118,7 +113,6 @@ const ROTATIONS = [
   },
 ];
 
-/* Limited water makes "Save water" count more; plenty of water makes it count less. */
 const WATER_FACTOR = { low: 1.5, medium: 1, high: 0.8 };
 
 /* ---------- 2) Field conditions (live NASA POWER + estimates) ---------- */
@@ -132,11 +126,7 @@ async function getConditions(lat, lon) {
     const annual = (obj) => Number(obj?.['Annual Average'] ?? obj?.['Mean'] ?? obj?.[Object.keys(obj)[0]]);
     const rainMm = annual(params.PRECTOTCORR);
     const tempC = annual(params.T2M);
-    // Estimate soil moisture from rainfall & temperature (simplified water-balance proxy)
-    // Wetter + cooler = higher moisture; drier + hotter = lower moisture
     const soilMoisture = Math.min(0.45, Math.max(0.05, (rainMm / 2500) * (1 - (tempC - 10) / 60)));
-    // Estimate NDVI from rainfall & temperature (simplified vegetation proxy)
-    // More rain + moderate temps = greener vegetation
     const ndvi = Math.min(0.85, Math.max(0.1, (rainMm / 1800) * (1 - Math.abs(tempC - 22) / 40)));
     return { demo: false, tempC, rainMm, soilMoisture: +soilMoisture.toFixed(2), ndvi: +ndvi.toFixed(2) };
   } catch (e) {
@@ -147,7 +137,7 @@ async function getConditions(lat, lon) {
 
 /* ---------- Helpers ---------- */
 const $ = (id) => document.getElementById(id);
-const state = { latlng: null };
+const state = { latlng: null, charts: [] };
 
 function scrollBehavior() {
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -195,7 +185,6 @@ function initMap() {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
-  // NASA GIBS overlay layers
   const ndviLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day_500m/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg', {
     attribution: 'NASA GIBS MODIS NDVI',
     opacity: 0.5,
@@ -204,11 +193,10 @@ function initMap() {
     attribution: 'NASA GIBS SMAP Soil Moisture',
     opacity: 0.5,
   });
-  const overlays = {
+  L.control.layers(null, {
     'NDVI (8\u2011day)': ndviLayer,
     'Soil Moisture (SMAP)': smapLayer,
-  };
-  L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+  }, { collapsed: false }).addTo(map);
 
   let marker = null;
   function setLocation(latlng) {
@@ -252,7 +240,6 @@ function getWeights() {
 function scoreOf(rot, w) {
   const total = CRITERIA.reduce((sum, c) => sum + w[c.key], 0);
   if (total === 0) {
-    // No priorities set: treat every criterion equally.
     const flat = CRITERIA.reduce((sum, c) => sum + rot.scores[c.key], 0);
     return Math.round((flat / (5 * CRITERIA.length)) * 100);
   }
@@ -274,28 +261,23 @@ function whyText(rot, w, isCurrent) {
   return parts.join(" ");
 }
 
-/* ---------- Rendering ---------- */
-function conditionsHTML(c) {
-  const fmt = (v, unit) => (v != null ? `${v} ${unit}` : "N/A");
-  const tiles = [
-    ["Average temperature", fmt(c.tempC, "\u00B0C"), "NASA POWER", "Yearly average air temperature."],
-    ["Annual rainfall", fmt(c.rainMm, "mm"), "NASA POWER & GPM", "Total rain in a typical year."],
-    ["Soil moisture (est.)", fmt(c.soilMoisture, "m\u00B3/m\u00B3"), "SMAP (estimated)", "Water held in the top layer of soil. Estimated from rainfall and temperature."],
-    ["Vegetation greenness (NDVI est.)", fmt(c.ndvi, ""), "MODIS (estimated)", "How green and healthy plants look from space, from 0 to 1. Estimated from rainfall and temperature."],
-  ];
-  return tiles
-    .map(
-      ([k, v, src, d]) => `
-      <div class="cond">
-        <div class="k">${k}</div>
-        <div class="v">${v}</div>
-        <div class="src">${src}</div>
-        <p class="d">${d}</p>
-      </div>`
-    )
-    .join("");
+/* ---------- SVG Ring ---------- */
+function ringSVG(score, cssClass) {
+  const r = 36;
+  const circ = 2 * Math.PI * r;
+  const offset = circ - (score / 100) * circ;
+  return `
+    <div class="ring-wrap">
+      <svg viewBox="0 0 90 90">
+        <circle class="ring-bg" cx="45" cy="45" r="${r}"/>
+        <circle class="ring-fg ${cssClass}" cx="45" cy="45" r="${r}"
+          stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
+      </svg>
+      <div class="ring-number">${score}</div>
+    </div>`;
 }
 
+/* ---------- Rendering ---------- */
 function columnHTML(item, index, w) {
   const { rot, score, isCurrent } = item;
   const tag = isCurrent ? "Your current rotation" : `Suggestion ${index}`;
@@ -327,18 +309,184 @@ function columnHTML(item, index, w) {
 }
 
 function renderResults(cond, items, w) {
+  // Destroy old charts
+  state.charts.forEach(c => c.destroy());
+  state.charts = [];
+
   const best = items.reduce((a, b) => (b.score > a.score ? b : a));
   const headline = best.isCurrent
     ? "Your current rotation scores best for these priorities."
     : `Best fit for your priorities: ${best.rot.name}`;
 
+  const fmt = (v, unit) => (v != null ? `${v} ${unit}` : "N/A");
+  const lat = state.latlng.lat.toFixed(4);
+  const lng = state.latlng.lng.toFixed(4);
+
+  const statusPill = cond.demo
+    ? '<span class="pill-demo">\u26A0 Demo values</span>'
+    : '<span class="pill-live">\u2713 Live NASA data</span>';
+
   $("results").innerHTML = `
-    <h2 class="headline">${headline}</h2>
+    <!-- Dashboard Header -->
+    <div class="dash-header">
+      <h2>Field Shift Dashboard</h2>
+      <div class="dash-status">${statusPill}</div>
+    </div>
+
+    <!-- Top Grid: Details | Metrics | Progress Rings -->
+    <div class="dash-grid">
+      <!-- Details Card -->
+      <div class="dash-card">
+        <h3>Field Details</h3>
+        <div class="detail-row"><span class="detail-label">Latitude</span><span class="detail-value">${lat}</span></div>
+        <div class="detail-row"><span class="detail-label">Longitude</span><span class="detail-value">${lng}</span></div>
+        <div class="detail-row"><span class="detail-label">Current Rotation</span><span class="detail-value">${items[0].rot.name}</span></div>
+        <div class="detail-row"><span class="detail-label">Water Available</span><span class="detail-value">${$("water").value}</span></div>
+        <div class="detail-row"><span class="detail-label">Best Fit</span><span class="detail-value" style="color:var(--leaf)">${best.rot.name}</span></div>
+      </div>
+
+      <!-- Metrics Card -->
+      <div class="dash-card">
+        <h3>NASA Metrics</h3>
+        <div class="metrics-grid">
+          <div class="metric-tile">
+            <div class="metric-label">Avg Temperature</div>
+            <div class="metric-value">${fmt(cond.tempC, "\u00B0C")}</div>
+            <div class="metric-source">NASA POWER</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">Annual Rainfall</div>
+            <div class="metric-value">${fmt(cond.rainMm, "mm")}</div>
+            <div class="metric-source">NASA POWER & GPM</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">Soil Moisture (est.)</div>
+            <div class="metric-value">${fmt(cond.soilMoisture, "m\u00B3/m\u00B3")}</div>
+            <div class="metric-source">SMAP (estimated)</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">NDVI (est.)</div>
+            <div class="metric-value">${fmt(cond.ndvi, "")}</div>
+            <div class="metric-source">MODIS (estimated)</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress Rings Card -->
+      <div class="dash-card">
+        <h3>Fit Score</h3>
+        <div class="progress-section">
+          <div class="rings-row">
+            ${items.map((item, i) => `
+              <div class="ring-item">
+                ${ringSVG(item.score, i === 0 ? 'current' : i === 1 ? 'alt1' : 'alt2')}
+                <span class="ring-label">${item.isCurrent ? 'Current' : item.rot.name.split('\u2192').pop().trim()}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts Row -->
+    <div class="charts-row">
+      <div class="chart-card">
+        <h3>Criteria Comparison (Radar)</h3>
+        <div class="chart-container"><canvas id="radarChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>Score Breakdown (Donut)</h3>
+        <div class="chart-container"><canvas id="donutChart"></canvas></div>
+      </div>
+    </div>
+
     <p class="notice">This tool supports your decision and does not replace your own judgment or local agricultural advice. Check every option with local farmers or an agronomist before changing your rotation.</p>
-    <h3 class="section-title">Conditions at your field ${cond.demo ? '<span class="pill">Demo values</span>' : '<span class="pill" style="border-color:#1f7a3d;color:#1f7a3d">Live NASA data</span>'}</h3>
-    <div class="strip">${conditionsHTML(cond)}</div>
+
     <h3 class="section-title">Rotation comparison</h3>
-    <div class="compare">${items.map((item, i) => columnHTML(item, i, w)).join("")}</div>`;
+    <div class="compare">${items.map((item, i) => columnHTML(item, i, w)).join("")}</div>
+  `;
+
+  // Build Charts
+  buildCharts(items);
+}
+
+/* ---------- Charts ---------- */
+function buildCharts(items) {
+  const labels = CRITERIA.map(c => c.label);
+  const colors = ['#7a4a22', '#1f7a3d', '#1f5f9e'];
+  const bgColors = ['rgba(122,74,34,0.15)', 'rgba(31,122,61,0.15)', 'rgba(31,95,158,0.15)'];
+
+  // Radar Chart
+  const radarCtx = document.getElementById('radarChart');
+  if (radarCtx) {
+    const radarChart = new Chart(radarCtx, {
+      type: 'radar',
+      data: {
+        labels: labels,
+        datasets: items.map((item, i) => ({
+          label: item.isCurrent ? `Current: ${item.rot.name}` : item.rot.name,
+          data: CRITERIA.map(c => item.rot.scores[c.key]),
+          borderColor: colors[i],
+          backgroundColor: bgColors[i],
+          borderWidth: 2.5,
+          pointRadius: 4,
+          pointBackgroundColor: colors[i],
+        })),
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11, family: 'Public Sans' }, usePointStyle: true } },
+        },
+        scales: {
+          r: {
+            beginAtZero: true,
+            max: 5,
+            ticks: { stepSize: 1, font: { size: 10 } },
+            pointLabels: { font: { size: 11, family: 'Public Sans', weight: '600' } },
+            grid: { color: 'rgba(0,0,0,0.06)' },
+          },
+        },
+      },
+    });
+    state.charts.push(radarChart);
+  }
+
+  // Donut Chart
+  const donutCtx = document.getElementById('donutChart');
+  if (donutCtx) {
+    const donutChart = new Chart(donutCtx, {
+      type: 'doughnut',
+      data: {
+        labels: items.map(item => item.isCurrent ? `Current` : item.rot.name.split('\u2192').pop().trim()),
+        datasets: [{
+          data: items.map(item => item.score),
+          backgroundColor: colors,
+          borderColor: '#fff',
+          borderWidth: 3,
+          hoverOffset: 8,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        cutout: '60%',
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { font: { size: 12, family: 'Public Sans' }, usePointStyle: true, padding: 16 },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => ` ${ctx.label}: ${ctx.parsed} / 100`,
+            },
+          },
+        },
+      },
+    });
+    state.charts.push(donutChart);
+  }
 }
 
 /* ---------- Compare ---------- */
