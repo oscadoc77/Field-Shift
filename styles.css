@@ -351,11 +351,42 @@ output { font-weight: 700; color: var(--leaf-dk); }
   letter-spacing: 0.04em;
   margin-bottom: 14px;
 }
+.chart-card, .dash-card { min-width: 0; }
 .chart-container {
   position: relative;
   width: 100%;
+  max-width: 100%;
   height: 380px;
 }
+
+/* --- Monthly climate card --- */
+.chart-card.wide { margin-bottom: 24px; }
+.chart-container.tall { height: 340px; }
+.risk-strip {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 18px 0 12px;
+}
+.risk-cell {
+  background: #f8faf6;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 4px;
+  text-align: center;
+  min-height: 66px;
+}
+.risk-month { display: block; font-weight: 700; font-size: 0.85rem; margin-bottom: 4px; }
+.risk-flags { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.flag { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 0.72rem; font-weight: 700; }
+.flag-dry { background: #f3e0c9; color: #6b3d10; }
+.flag-cold { background: #dbeafc; color: #17497c; }
+.flag-hot { background: #f9dcd8; color: #8e1f14; }
+.flag-ok { color: var(--leaf-dk); font-size: 0.75rem; font-weight: 700; }
+.risk-note { margin: 0; font-size: 0.85rem; color: var(--muted); max-width: 90ch; }
+.metric-note { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
 
 /* --- Notice --- */
 .notice {
@@ -453,8 +484,8 @@ output { font-weight: 700; color: var(--leaf-dk); }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
-  .dash-grid { grid-template-columns: 1fr; }
-  .charts-row { grid-template-columns: 1fr; }
+  .dash-grid { grid-template-columns: minmax(0, 1fr); }
+  .charts-row { grid-template-columns: minmax(0, 1fr); }
   .compare { display: block; }
   .col { display: block; border-left: 0; border-bottom: 1px solid var(--line); }
   .col:last-child { border-bottom: 0; }
@@ -464,6 +495,8 @@ output { font-weight: 700; color: var(--leaf-dk); }
   .map { min-height: 320px; }
   .rings-row { gap: 12px; }
   .chart-container { height: 320px; }
+  .chart-container.tall { height: 300px; }
+  .risk-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); }
   .ring-wrap { width: 70px; height: 70px; }
   .ring-wrap svg { width: 70px; height: 70px; }
   .ring-number { font-size: 1rem; }

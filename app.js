@@ -116,28 +116,116 @@ const ROTATIONS = [
 const WATER_FACTOR = { low: 1.5, medium: 1, high: 0.8 };
 const WATER_LABEL = { low: "Limited", medium: "Moderate", high: "Plenty" };
 
+/* How sensitive each rotation is to water shortage, heat and frost (0 = low, 2 = high).
+   Illustrative values, to be reviewed by an agronomist. */
+const TRAITS = {
+  mono: { waterDemand: 2, heat: 1.5, frost: 1.5 },
+  beans: { waterDemand: 1, heat: 2, frost: 2 },
+  sorghum: { waterDemand: 0.5, heat: 0.5, frost: 2 },
+  cover: { waterDemand: 1, heat: 1.5, frost: 0 },
+  fallow: { waterDemand: 1, heat: 0, frost: 0 },
+  chickpea: { waterDemand: 0.5, heat: 1.5, frost: 1 },
+};
+
+/* Adjust a rotation's ratings to this field's climate and explain why in plain language. */
+function adjustFor(rot, risks) {
+  const scores = { ...rot.scores };
+  const notes = [];
+  if (!risks) return { scores, notes };
+  const t = TRAITS[rot.id];
+  const waterShift = (1 - t.waterDemand) * risks.water;
+  const heatHit = 0.5 * t.heat * risks.heat;
+  const frostHit = 0.5 * t.frost * risks.frost;
+  scores.water = clamp(scores.water + waterShift, 1, 5);
+  scores.resilience = clamp(scores.resilience - heatHit - frostHit + 0.5 * waterShift, 1, 5);
+  if (waterShift <= -0.15) notes.push(`Needs more water than this field's ${risks.dryMonths} dry months provide.`);
+  if (waterShift >= 0.15) notes.push(`Low water needs suit this field's ${risks.dryMonths} dry months.`);
+  if (frostHit >= 0.15) notes.push(`Frost-sensitive, and ${risks.coldMonths} months here are cold enough to worry about.`);
+  if (heatHit >= 0.15) notes.push(`Sensitive to heat, and ${risks.hotMonths} months here run hot.`);
+  return { scores, notes };
+}
+
 /* ---------- 2) Field conditions (live NASA POWER + estimates) ---------- */
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const sumOf = (arr) => arr.reduce((a, b) => a + b, 0);
+
+const MONTH_KEYS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/* Rules of thumb used to flag risky months. Edit them to match local knowledge. */
+const RISK = { dryMmPerMonth: 40, coldMinC: 5, hotMaxC: 33 };
+
+/* Count risky months and turn them into 0-1 stress indexes (0 = no stress, 1 = severe). */
+function assessRisks(m) {
+  const months = MONTH_LABELS.map((label, i) => ({
+    label,
+    dry: m.rainMm[i] < RISK.dryMmPerMonth,
+    cold: m.tempMinC[i] < RISK.coldMinC,
+    hot: m.tempMaxC[i] > RISK.hotMaxC,
+  }));
+  const count = (key) => months.filter((x) => x[key]).length;
+  const dryMonths = count("dry");
+  const coldMonths = count("cold");
+  const hotMonths = count("hot");
+  const annualRain = sumOf(m.rainMm);
+  return {
+    months,
+    dryMonths,
+    coldMonths,
+    hotMonths,
+    water: (clamp((dryMonths - 3) / 6, 0, 1) + clamp((900 - annualRain) / 700, 0, 1)) / 2,
+    frost: clamp(coldMonths / 4, 0, 1),
+    heat: clamp(hotMonths / 4, 0, 1),
+  };
+}
+
+/* Build the conditions object from 12 monthly values per variable. */
+function buildConditions(monthly, demo) {
+  const avgTemp = sumOf(monthly.tempC) / 12;
+  const annualRain = sumOf(monthly.rainMm);
+  // Soil moisture and NDVI are rough estimates from rainfall and temperature, not NASA measurements.
+  const soilMoisture = clamp((annualRain / 2500) * (1 - (avgTemp - 10) / 60), 0.05, 0.45);
+  const ndvi = clamp((annualRain / 1800) * (1 - Math.abs(avgTemp - 22) / 40), 0.1, 0.85);
+  return {
+    demo,
+    tempC: +avgTemp.toFixed(1),
+    rainMm: Math.round(annualRain),
+    soilMoisture: +soilMoisture.toFixed(2),
+    ndvi: +ndvi.toFixed(2),
+    monthly,
+    risks: assessRisks(monthly),
+  };
+}
+
+/* Typical seasonal pattern, used only when NASA POWER cannot be reached. */
+const DEMO_MONTHLY = {
+  tempC: [15, 16.5, 18.5, 20.5, 22, 22, 21, 21, 20.5, 19, 17, 15.5],
+  tempMaxC: [24, 26, 28.5, 30.5, 31.5, 29.5, 27, 27, 27, 27, 25.5, 24],
+  tempMinC: [6.5, 7, 9, 11.5, 14, 16, 15.5, 15.5, 15.5, 12.5, 9, 7],
+  rainMm: [12, 5, 5, 8, 30, 160, 200, 180, 140, 55, 12, 8],
+};
+
 async function getConditions(lat, lon) {
   try {
-    const url = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,RH2M,T2M_MAX,T2M_MIN&community=AG&latitude=${lat}&longitude=${lon}&format=JSON`;
+    const url = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,T2M_MAX,T2M_MIN&community=AG&latitude=${lat}&longitude=${lon}&format=JSON`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`NASA POWER request failed ${resp.status}`);
     const json = await resp.json();
     const params = json?.properties?.parameter;
-    // POWER climatology returns JAN..DEC plus ANN (the annual value).
-    const annual = (obj) => Number(obj?.ANN);
-    const tempC = annual(params?.T2M);
-    const rainMm = annual(params?.PRECTOTCORR) * 365; // POWER reports precipitation in mm/day
-    if (!Number.isFinite(tempC) || !Number.isFinite(rainMm) || tempC < -900 || rainMm < 0) {
-      throw new Error("Unexpected NASA POWER response"); // -999 is POWER's missing-data value
-    }
-    // Soil moisture and NDVI are rough estimates from rainfall and temperature, not NASA measurements.
-    const soilMoisture = Math.min(0.45, Math.max(0.05, (rainMm / 2500) * (1 - (tempC - 10) / 60)));
-    const ndvi = Math.min(0.85, Math.max(0.1, (rainMm / 1800) * (1 - Math.abs(tempC - 22) / 40)));
-    return { demo: false, tempC: +tempC.toFixed(1), rainMm: Math.round(rainMm), soilMoisture: +soilMoisture.toFixed(2), ndvi: +ndvi.toFixed(2) };
+    // POWER climatology returns JAN..DEC plus ANN. Missing data is -999.
+    const byMonth = (obj) => MONTH_KEYS.map((key) => Number(obj?.[key]));
+    const tempC = byMonth(params?.T2M);
+    const tempMaxC = byMonth(params?.T2M_MAX);
+    const tempMinC = byMonth(params?.T2M_MIN);
+    const rainMm = byMonth(params?.PRECTOTCORR).map((mmPerDay, i) => mmPerDay * DAYS_IN_MONTH[i]); // POWER reports mm/day
+    const badTemp = [...tempC, ...tempMaxC, ...tempMinC].some((v) => !Number.isFinite(v) || v < -900);
+    const badRain = rainMm.some((v) => !Number.isFinite(v) || v < 0);
+    if (badTemp || badRain) throw new Error("Unexpected NASA POWER response");
+    return buildConditions({ tempC, tempMaxC, tempMinC, rainMm }, false);
   } catch (e) {
     console.warn('Failed to fetch NASA POWER data, using demo values', e);
-    return { demo: true, tempC: 21.4, rainMm: 640, soilMoisture: 0.24, ndvi: 0.52 };
+    return buildConditions(DEMO_MONTHLY, true);
   }
 }
 
@@ -155,7 +243,8 @@ function joinList(items) {
   return items.slice(0, -1).join(", ") + " and " + items[items.length - 1];
 }
 
-function dots(n) {
+function dots(value) {
+  const n = Math.round(value);
   return "\u25CF".repeat(n) + "\u25CB".repeat(5 - n);
 }
 
@@ -267,6 +356,7 @@ function whyText(rot, w, isCurrent) {
   if (strong.length) parts.push(`Strong on what matters most to you: ${joinList(strong)}.`);
   if (weak.length) parts.push(`Weaker on ${joinList(weak)}.`);
   if (!strong.length && !weak.length) parts.push("A middle-of-the-road option for your priorities.");
+  if (rot.notes) parts.push(...rot.notes);
   return parts.join(" ");
 }
 
@@ -287,13 +377,29 @@ function ringSVG(score, cssClass) {
 }
 
 /* ---------- Rendering ---------- */
+function riskStripHTML(risks) {
+  const cells = risks.months
+    .map((m) => {
+      const flags = [
+        m.dry ? '<span class="flag flag-dry">Dry</span>' : "",
+        m.cold ? '<span class="flag flag-cold">Cold</span>' : "",
+        m.hot ? '<span class="flag flag-hot">Hot</span>' : "",
+      ].join("");
+      return `<li class="risk-cell"><span class="risk-month">${m.label}</span><span class="risk-flags">${flags || '<span class="flag-ok">OK</span>'}</span></li>`;
+    })
+    .join("");
+  return `
+    <ul class="risk-strip">${cells}</ul>
+    <p class="risk-note">Dry means under ${RISK.dryMmPerMonth} mm of rain in the month, cold means an average night low under ${RISK.coldMinC} \u00B0C (frost is possible), and hot means an average daytime high over ${RISK.hotMaxC} \u00B0C. These are rules of thumb based on NASA POWER monthly averages, so local conditions can differ. At this location: ${risks.dryMonths} dry, ${risks.coldMonths} cold and ${risks.hotMonths} hot months.</p>`;
+}
+
 function columnHTML(item, index, w) {
   const { rot, score, isCurrent } = item;
   const tag = isCurrent ? "Your current rotation" : `Suggestion ${index}`;
   const pin = Math.min(98, Math.max(2, score));
   const list = (arr) => arr.map((t) => `<li>${t}</li>`).join("");
   const ratings = CRITERIA.map(
-    (c) => `<li><span>${c.label}</span><span class="dots" role="img" aria-label="${rot.scores[c.key]} out of 5">${dots(rot.scores[c.key])}</span></li>`
+    (c) => `<li><span>${c.label}</span><span class="dots" role="img" aria-label="${Math.round(rot.scores[c.key])} out of 5">${dots(rot.scores[c.key])}</span></li>`
   ).join("");
 
   return `
@@ -362,21 +468,25 @@ function renderResults(cond, items, w) {
             <div class="metric-label">Avg Temperature</div>
             <div class="metric-value">${fmt(cond.tempC, "\u00B0C")}</div>
             <div class="metric-source">NASA POWER</div>
+            <div class="metric-note">Yearly average air temperature.</div>
           </div>
           <div class="metric-tile">
             <div class="metric-label">Annual Rainfall</div>
             <div class="metric-value">${fmt(cond.rainMm, "mm")}</div>
-            <div class="metric-source">NASA POWER & GPM</div>
+            <div class="metric-source">NASA POWER</div>
+            <div class="metric-note">Total rain in a typical year.</div>
           </div>
           <div class="metric-tile">
             <div class="metric-label">Soil Moisture (est.)</div>
             <div class="metric-value">${fmt(cond.soilMoisture, "m\u00B3/m\u00B3")}</div>
-            <div class="metric-source">SMAP (estimated)</div>
+            <div class="metric-source">Estimated from NASA POWER</div>
+            <div class="metric-note">Water held in the top layer of soil. A rough estimate from rain and temperature.</div>
           </div>
           <div class="metric-tile">
             <div class="metric-label">NDVI (est.)</div>
             <div class="metric-value">${fmt(cond.ndvi, "")}</div>
-            <div class="metric-source">MODIS (estimated)</div>
+            <div class="metric-source">Estimated from NASA POWER</div>
+            <div class="metric-note">How green and healthy plants look from space, from 0 to 1. A rough estimate.</div>
           </div>
         </div>
       </div>
@@ -409,6 +519,12 @@ function renderResults(cond, items, w) {
       </div>
     </div>
 
+    <div class="chart-card wide">
+      <h3>Monthly climate and risky months</h3>
+      <div class="chart-container tall"><canvas id="climateChart"></canvas></div>
+      ${riskStripHTML(cond.risks)}
+    </div>
+
     <p class="notice">This tool supports your decision and does not replace your own judgment or local agricultural advice. Check every option with local farmers or an agronomist before changing your rotation.</p>
 
     <h3 class="section-title">Rotation comparison</h3>
@@ -416,11 +532,11 @@ function renderResults(cond, items, w) {
   `;
 
   // Build Charts
-  buildCharts(items);
+  buildCharts(items, cond);
 }
 
 /* ---------- Charts ---------- */
-function buildCharts(items) {
+function buildCharts(items, cond) {
   if (typeof Chart === "undefined") return; // Chart.js CDN did not load: keep the rest of the results working
   const labels = CRITERIA.map(c => c.label);
   const colors = ['#7a4a22', '#1f7a3d', '#1f5f9e'];
@@ -435,7 +551,7 @@ function buildCharts(items) {
         labels: labels,
         datasets: items.map((item, i) => ({
           label: item.isCurrent ? `Current: ${item.rot.name}` : item.rot.name,
-          data: CRITERIA.map(c => item.rot.scores[c.key]),
+          data: CRITERIA.map(c => +item.rot.scores[c.key].toFixed(1)),
           borderColor: colors[i],
           backgroundColor: bgColors[i],
           borderWidth: 2.5,
@@ -491,6 +607,43 @@ function buildCharts(items) {
     });
     state.charts.push(barChart);
   }
+
+  // Monthly climate chart: rain as bars, temperatures as lines
+  const climateCtx = document.getElementById('climateChart');
+  if (climateCtx && cond && cond.monthly) {
+    const m = cond.monthly;
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const line = (label, data, color, order) => ({
+      type: 'line', label, data: data.map(r1), borderColor: color, backgroundColor: color,
+      borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yTemp', order,
+    });
+    const climateChart = new Chart(climateCtx, {
+      type: 'bar',
+      data: {
+        labels: MONTH_LABELS,
+        datasets: [
+          { type: 'bar', label: 'Rain (mm per month)', data: m.rainMm.map((v) => Math.round(v)), backgroundColor: 'rgba(31,95,158,0.35)', borderRadius: 4, yAxisID: 'yRain', order: 4 },
+          line('Highest temperature (\u00B0C)', m.tempMaxC, '#a8271c', 1),
+          line('Average temperature (\u00B0C)', m.tempC, '#7a4a22', 2),
+          line('Lowest temperature (\u00B0C)', m.tempMinC, '#1f5f9e', 3),
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'bottom', labels: { usePointStyle: true, font: { size: 12, family: 'Public Sans' } } },
+        },
+        scales: {
+          x: { grid: { display: false } },
+          yRain: { type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Rain (mm per month)' }, grid: { color: 'rgba(0,0,0,0.06)' } },
+          yTemp: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (\u00B0C)' }, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+    state.charts.push(climateChart);
+  }
 }
 
 /* ---------- Compare ---------- */
@@ -512,8 +665,13 @@ async function onCompare() {
     const cond = await getConditions(state.latlng.lat, state.latlng.lng);
     const w = getWeights();
 
-    const current = ROTATIONS.find((r) => r.id === $("current").value);
+    const adjust = (r) => {
+      const a = adjustFor(r, cond.risks);
+      return { ...r, scores: a.scores, notes: a.notes };
+    };
+    const current = adjust(ROTATIONS.find((r) => r.id === $("current").value));
     const others = ROTATIONS.filter((r) => r.id !== current.id)
+      .map((r) => adjust(r))
       .map((r) => ({ rot: r, score: scoreOf(r, w), isCurrent: false }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 2);
