@@ -1,237 +1,534 @@
 "use strict";
 
 /* ==========================================================================
-   Field Shift: front-end prototype with dashboard-style results
+   Field Shift: front-end prototype
+
+   File map
+     1) Preferences ...... theme and language, saved in the browser
+     2) I18N ............. every interface string, in English and Spanish
+     3) CRITERIA/ROTATIONS  illustrative agronomic content (not yet reviewed
+                            by local agronomists; replace before real use)
+     4) getConditions() .. live NASA POWER request with a labelled demo fallback
+     5) Controls, map, scoring, rendering
+
+   To add a language: add its code to LANGS, add a block to I18N, and add the
+   same key to every { en, es } object in CRITERIA and ROTATIONS.
    ========================================================================== */
 
-/* ---------- 1) What farmers can prioritise ---------- */
+/* ---------- 1) Preferences ---------- */
+const LANGS = ["en", "es"];
+
+/* localStorage throws in some private modes; never let that break the page. */
+const store = {
+  get(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  },
+  set(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) { /* preference lasts this visit only */ }
+  },
+};
+
+const darkQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+function initialTheme() {
+  const saved = store.get("fs-theme");
+  if (saved === "light" || saved === "dark") return saved;
+  return darkQuery && darkQuery.matches ? "dark" : "light";
+}
+
+function initialLang() {
+  const saved = store.get("fs-lang");
+  if (LANGS.includes(saved)) return saved;
+  const browser = (navigator.language || "en").slice(0, 2).toLowerCase();
+  return LANGS.includes(browser) ? browser : "en";
+}
+
+const prefs = { theme: initialTheme(), lang: initialLang() };
+
+/* This file loads in <head>, so these two lines run before the first paint
+   and the page never flashes the wrong theme. */
+document.documentElement.dataset.theme = prefs.theme;
+document.documentElement.lang = prefs.lang;
+
+/* ---------- 2) Interface strings ---------- */
+const I18N = {
+  en: {
+    title: "Field Shift: crop-rotation explorer",
+    tagline: "Explore crop rotations with NASA Earth data",
+    demoFlag: "Prototype",
+    langGroup: "Language",
+    darkMode: "Dark mode",
+    controlsLabel: "Your field and priorities",
+    mapLabel: "Map for choosing your field",
+    resultsLabel: "Rotation comparison",
+    step1: "Pick your field",
+    step1Hint: "Click the map to place a marker on your field.",
+    useLocation: "Use my location",
+    step2: "Your current rotation",
+    currentLabel: "What do you grow today?",
+    step3: "What matters most?",
+    step3Hint: "0 means it doesn't matter, 5 means it matters most.",
+    waterLabel: "Water available for the field",
+    waterLow: "Limited",
+    waterMedium: "Moderate",
+    waterHigh: "Plenty",
+    compare: "Compare rotations",
+    comparing: "Comparing…",
+    empty: "Choose your field on the map, set what matters most to you, then select Compare rotations. You will see your current rotation next to two alternatives.",
+    footer: "Field Shift supports your decisions and does not replace your own judgment or local agricultural advice. Crop ratings are illustrative. Field conditions come from NASA POWER when it responds; otherwise demo values are shown and labelled.",
+    noField: "No field selected yet.",
+    fieldAt: "Field",
+    west: "W",
+    errNoGeo: "Location is not available in this browser. Click the map to place your field.",
+    errGeoFail: "Couldn't get your location. Click the map to place your field instead.",
+    errNoField: "Click the map to place a marker on your field, then compare again.",
+    errCompare: "The comparison didn't load. Check your connection and select Compare rotations again.",
+    errMap: "The map didn't load. Check your connection and reload the page.",
+    layersTitle: "NASA satellite layers",
+    layersNote: "For visual context. They do not change the score.",
+    layerNdvi: "Vegetation greenness (NDVI, 8-day)",
+    layerSmap: "Soil moisture (SMAP)",
+    bestCurrent: "Your current rotation scores best for these priorities.",
+    bestOther: "Best fit for your priorities: {name}",
+    notice: "This tool supports your decision and does not replace your own judgment or local agricultural advice. Check every option with local farmers or an agronomist before changing your rotation.",
+    conditionsTitle: "Conditions at your field",
+    demoPill: "Demo values",
+    livePill: "NASA POWER, long-term average",
+    comparisonTitle: "Rotation comparison",
+    tagCurrent: "Your current rotation",
+    tagSuggestion: "Suggestion {n}",
+    tagBest: "Best fit",
+    outOf100: "out of 100",
+    fitAria: "Fit score {score} out of 100",
+    rateAria: "{n} out of 5",
+    poorFit: "Poor fit",
+    strongFit: "Strong fit",
+    why: "Why",
+    rates: "How it rates",
+    benefits: "Benefits",
+    nasaData: "NASA data that would back this up",
+    gaps: "Information gaps",
+    risks: "Risks to review locally",
+    whyBaseline: "Baseline for the comparison.",
+    whyStrong: "Strong on what matters most to you: {list}.",
+    whyWeak: "Weaker on {list}.",
+    whyMiddle: "A middle-of-the-road option for your priorities.",
+    condTemp: "Average temperature",
+    condTempDesc: "Yearly average air temperature.",
+    condRain: "Annual rainfall",
+    condRainDesc: "Total rain in a typical year.",
+    condSoil: "Root-zone soil wetness",
+    condSoilDesc: "How wet the soil is where roots grow: 0% is dry, 100% is saturated. This is a model estimate, not a satellite measurement.",
+    condSoilSrc: "NASA POWER (MERRA-2 model)",
+    condNdvi: "Vegetation greenness (NDVI)",
+    condNdviDesc: "How green and healthy plants look from space, from 0 to 1.",
+    condNdviNone: "No value for a single field yet. Turn on the NDVI layer on the map to see it.",
+    noData: "Not available",
+    demoSrc: "demo value",
+  },
+  es: {
+    title: "Field Shift: explorador de rotación de cultivos",
+    tagline: "Explora rotaciones de cultivos con datos de la Tierra de la NASA",
+    demoFlag: "Prototipo",
+    langGroup: "Idioma",
+    darkMode: "Modo oscuro",
+    controlsLabel: "Tu parcela y tus prioridades",
+    mapLabel: "Mapa para elegir tu parcela",
+    resultsLabel: "Comparación de rotaciones",
+    step1: "Elige tu parcela",
+    step1Hint: "Haz clic en el mapa para colocar un marcador en tu parcela.",
+    useLocation: "Usar mi ubicación",
+    step2: "Tu rotación actual",
+    currentLabel: "¿Qué siembras hoy?",
+    step3: "¿Qué te importa más?",
+    step3Hint: "0 significa que no importa; 5, que es lo que más importa.",
+    waterLabel: "Agua disponible para la parcela",
+    waterLow: "Limitada",
+    waterMedium: "Moderada",
+    waterHigh: "Abundante",
+    compare: "Comparar rotaciones",
+    comparing: "Comparando…",
+    empty: "Elige tu parcela en el mapa, indica qué te importa más y selecciona Comparar rotaciones. Verás tu rotación actual junto a dos alternativas.",
+    footer: "Field Shift apoya tus decisiones y no sustituye tu propio criterio ni la asesoría agrícola local. Las calificaciones de los cultivos son ilustrativas. Las condiciones de la parcela vienen de NASA POWER cuando responde; si no, se muestran valores de demostración y se indican como tales.",
+    noField: "Aún no has elegido una parcela.",
+    fieldAt: "Parcela",
+    west: "O",
+    errNoGeo: "Este navegador no ofrece la ubicación. Haz clic en el mapa para colocar tu parcela.",
+    errGeoFail: "No se pudo obtener tu ubicación. Haz clic en el mapa para colocar tu parcela.",
+    errNoField: "Haz clic en el mapa para colocar un marcador en tu parcela y vuelve a comparar.",
+    errCompare: "La comparación no cargó. Revisa tu conexión y selecciona Comparar rotaciones otra vez.",
+    errMap: "El mapa no cargó. Revisa tu conexión y recarga la página.",
+    layersTitle: "Capas satelitales de la NASA",
+    layersNote: "Dan contexto visual. No cambian el puntaje.",
+    layerNdvi: "Verdor de la vegetación (NDVI, 8 días)",
+    layerSmap: "Humedad del suelo (SMAP)",
+    bestCurrent: "Tu rotación actual obtiene el mejor puntaje para estas prioridades.",
+    bestOther: "La que mejor se ajusta a tus prioridades: {name}",
+    notice: "Esta herramienta apoya tu decisión y no sustituye tu propio criterio ni la asesoría agrícola local. Revisa cada opción con agricultores de tu zona o con un agrónomo antes de cambiar tu rotación.",
+    conditionsTitle: "Condiciones en tu parcela",
+    demoPill: "Valores de demostración",
+    livePill: "NASA POWER, promedio de largo plazo",
+    comparisonTitle: "Comparación de rotaciones",
+    tagCurrent: "Tu rotación actual",
+    tagSuggestion: "Sugerencia {n}",
+    tagBest: "Mejor ajuste",
+    outOf100: "de 100",
+    fitAria: "Puntaje de ajuste: {score} de 100",
+    rateAria: "{n} de 5",
+    poorFit: "Poco ajuste",
+    strongFit: "Buen ajuste",
+    why: "Por qué",
+    rates: "Cómo califica",
+    benefits: "Beneficios",
+    nasaData: "Datos de la NASA que lo respaldarían",
+    gaps: "Información que falta",
+    risks: "Riesgos que revisar en tu zona",
+    whyBaseline: "Punto de partida de la comparación.",
+    whyStrong: "Fuerte en lo que más te importa: {list}.",
+    whyWeak: "Más débil en {list}.",
+    whyMiddle: "Una opción intermedia para tus prioridades.",
+    condTemp: "Temperatura promedio",
+    condTempDesc: "Temperatura promedio del aire en el año.",
+    condRain: "Lluvia anual",
+    condRainDesc: "Lluvia total en un año típico.",
+    condSoil: "Humedad del suelo en la zona de raíces",
+    condSoilDesc: "Qué tan húmedo está el suelo donde crecen las raíces: 0% es seco y 100% es saturado. Es una estimación de un modelo, no una medición satelital.",
+    condSoilSrc: "NASA POWER (modelo MERRA-2)",
+    condNdvi: "Verdor de la vegetación (NDVI)",
+    condNdviDesc: "Qué tan verdes y sanas se ven las plantas desde el espacio, de 0 a 1.",
+    condNdviNone: "Aún no hay valor para una sola parcela. Activa la capa NDVI en el mapa para verlo.",
+    noData: "No disponible",
+    demoSrc: "valor de demostración",
+  },
+};
+
+/* t("bestOther", { name: "Maize → Sorghum" }) fills {name} in the string. */
+function t(key, vars) {
+  const text = I18N[prefs.lang][key] ?? I18N.en[key] ?? key;
+  if (!vars) return text;
+  return text.replace(/\{(\w+)\}/g, (match, name) => (name in vars ? vars[name] : match));
+}
+
+/* Picks the current language out of an { en, es } object. */
+const pick = (obj) => obj[prefs.lang] ?? obj.en;
+
+/* ---------- 3) Content: what farmers can prioritise ---------- */
 const CRITERIA = [
-  { key: "water", label: "Save water", hint: "Lower irrigation needs" },
-  { key: "soil", label: "Improve soil", hint: "Nitrogen, organic matter, less erosion" },
-  { key: "income", label: "Extra income", hint: "Market and forage value" },
-  { key: "resilience", label: "Weather resilience", hint: "Copes with heat, frost and dry spells" },
+  {
+    key: "water",
+    label: { en: "Save water", es: "Ahorrar agua" },
+    hint: { en: "Lower irrigation needs", es: "Menor necesidad de riego" },
+  },
+  {
+    key: "soil",
+    label: { en: "Improve soil", es: "Mejorar el suelo" },
+    hint: { en: "Nitrogen, organic matter, less erosion", es: "Nitrógeno, materia orgánica, menos erosión" },
+  },
+  {
+    key: "income",
+    label: { en: "Extra income", es: "Ingreso adicional" },
+    hint: { en: "Market and forage value", es: "Valor de mercado y de forraje" },
+  },
+  {
+    key: "resilience",
+    label: { en: "Weather resilience", es: "Resistencia al clima" },
+    hint: { en: "Copes with heat, frost and dry spells", es: "Aguanta calor, heladas y periodos secos" },
+  },
 ];
 
 /* Ratings run from 1 (weak) to 5 (strong) for each criterion. */
 const ROTATIONS = [
   {
     id: "mono",
-    name: "Maize \u2192 Maize",
-    summary: "The same cereal every season.",
     scores: { water: 2, soil: 1, income: 3, resilience: 2 },
-    benefits: ["Familiar practices and equipment", "A steady, known market"],
-    data: ["MODIS NDVI", "NASA POWER"],
-    gaps: ["Soil nutrient levels after repeated maize", "Local pest and disease history"],
-    risks: [
-      "Repeated cereal cropping can deplete nutrients and build up pests and disease",
-      "Soil can stay bare between seasons, which raises erosion risk",
-    ],
+    name: { en: "Maize → Maize", es: "Maíz → Maíz" },
+    summary: { en: "The same cereal every season.", es: "El mismo cereal en cada ciclo." },
+    benefits: {
+      en: ["Familiar practices and equipment", "A steady, known market"],
+      es: ["Prácticas y equipo que ya conoces", "Un mercado estable y conocido"],
+    },
+    data: {
+      en: ["MODIS NDVI", "NASA POWER"],
+      es: ["NDVI de MODIS", "NASA POWER"],
+    },
+    gaps: {
+      en: ["Soil nutrient levels after repeated maize", "Local pest and disease history"],
+      es: ["Niveles de nutrientes del suelo tras varios ciclos de maíz", "Historial local de plagas y enfermedades"],
+    },
+    risks: {
+      en: [
+        "Repeated cereal cropping can deplete nutrients and build up pests and disease",
+        "Soil can stay bare between seasons, which raises erosion risk",
+      ],
+      es: [
+        "Sembrar cereal una y otra vez puede agotar nutrientes y favorecer plagas y enfermedades",
+        "El suelo puede quedar descubierto entre ciclos, lo que aumenta el riesgo de erosión",
+      ],
+    },
   },
   {
     id: "beans",
-    name: "Maize \u2192 Common beans",
-    summary: "A legume follows the cereal.",
     scores: { water: 3, soil: 4, income: 4, resilience: 3 },
-    benefits: [
-      "Beans fix nitrogen, which can lower fertilizer needs for the next cereal",
-      "Adds a second marketable crop",
-      "Breaks some cereal pest and disease cycles",
-    ],
-    data: ["NASA POWER", "SMAP soil moisture"],
-    gaps: ["Bean variety suited to the local season", "Local bean prices and buyers"],
-    risks: [
-      "Beans are sensitive to heat and water stress during flowering",
-      "Varieties, planting dates and prices need a local check",
-    ],
+    name: { en: "Maize → Common beans", es: "Maíz → Frijol" },
+    summary: { en: "A legume follows the cereal.", es: "Una leguminosa después del cereal." },
+    benefits: {
+      en: [
+        "Beans fix nitrogen, which can lower fertilizer needs for the next cereal",
+        "Adds a second marketable crop",
+        "Breaks some cereal pest and disease cycles",
+      ],
+      es: [
+        "El frijol fija nitrógeno, lo que puede reducir el fertilizante que necesita el siguiente cereal",
+        "Suma un segundo cultivo que se puede vender",
+        "Rompe algunos ciclos de plagas y enfermedades del cereal",
+      ],
+    },
+    data: {
+      en: ["NASA POWER", "SMAP soil moisture"],
+      es: ["NASA POWER", "Humedad del suelo SMAP"],
+    },
+    gaps: {
+      en: ["Bean variety suited to the local season", "Local bean prices and buyers"],
+      es: ["Variedad de frijol adecuada para la temporada local", "Precios y compradores locales de frijol"],
+    },
+    risks: {
+      en: [
+        "Beans are sensitive to heat and water stress during flowering",
+        "Varieties, planting dates and prices need a local check",
+      ],
+      es: [
+        "El frijol es sensible al calor y a la falta de agua durante la floración",
+        "Variedades, fechas de siembra y precios requieren verificación local",
+      ],
+    },
   },
   {
     id: "sorghum",
-    name: "Maize \u2192 Sorghum",
-    summary: "A drought-tolerant grain follows maize.",
     scores: { water: 4, soil: 3, income: 3, resilience: 4 },
-    benefits: [
-      "Sorghum generally tolerates drought better than maize",
-      "Extensive roots can reach deeper moisture and help water soak in",
-      "Can be used as grain or forage",
-    ],
-    data: ["GPM rainfall", "ECOSTRESS heat stress", "NASA POWER"],
-    gaps: ["Nearby buyers or forage demand for sorghum", "Frost dates and season length at the field"],
-    risks: [
-      "The local market for sorghum may be small or lower value",
-      "Only fits if the growing season and frost dates allow it",
-    ],
+    name: { en: "Maize → Sorghum", es: "Maíz → Sorgo" },
+    summary: { en: "A drought-tolerant grain follows maize.", es: "Un grano tolerante a la sequía después del maíz." },
+    benefits: {
+      en: [
+        "Sorghum generally tolerates drought better than maize",
+        "Extensive roots can reach deeper moisture and help water soak in",
+        "Can be used as grain or forage",
+      ],
+      es: [
+        "El sorgo suele tolerar la sequía mejor que el maíz",
+        "Sus raíces extensas alcanzan humedad más profunda y ayudan a que el agua se infiltre",
+        "Sirve como grano o como forraje",
+      ],
+    },
+    data: {
+      en: ["GPM rainfall", "ECOSTRESS heat stress", "NASA POWER"],
+      es: ["Lluvia GPM", "Estrés por calor ECOSTRESS", "NASA POWER"],
+    },
+    gaps: {
+      en: ["Nearby buyers or forage demand for sorghum", "Frost dates and season length at the field"],
+      es: ["Compradores cercanos o demanda de forraje para el sorgo", "Fechas de heladas y duración del ciclo en la parcela"],
+    },
+    risks: {
+      en: [
+        "The local market for sorghum may be small or lower value",
+        "Only fits if the growing season and frost dates allow it",
+      ],
+      es: [
+        "El mercado local de sorgo puede ser pequeño o de menor valor",
+        "Solo conviene si el ciclo de cultivo y las fechas de heladas lo permiten",
+      ],
+    },
   },
   {
     id: "cover",
-    name: "Maize \u2192 Oats and vetch cover crop",
-    summary: "A soil-building cover crop between maize crops.",
     scores: { water: 3, soil: 5, income: 2, resilience: 3 },
-    benefits: [
-      "Keeps soil covered, which reduces erosion",
-      "Adds organic matter, and vetch adds nitrogen",
-      "Can provide forage",
-    ],
-    data: ["MODIS and Landsat NDVI (bare-field periods)", "SMAP soil moisture"],
-    gaps: ["Seed cost and sowing window", "Whether livestock could use the forage"],
-    risks: [
-      "Little direct income unless it is used as forage",
-      "Cover crops use water, so timing matters in dry seasons",
-    ],
+    name: { en: "Maize → Oats and vetch cover crop", es: "Maíz → Cultivo de cobertura de avena y veza" },
+    summary: {
+      en: "A soil-building cover crop between maize crops.",
+      es: "Un cultivo de cobertura que mejora el suelo entre siembras de maíz.",
+    },
+    benefits: {
+      en: [
+        "Keeps soil covered, which reduces erosion",
+        "Adds organic matter, and vetch adds nitrogen",
+        "Can provide forage",
+      ],
+      es: [
+        "Mantiene el suelo cubierto, lo que reduce la erosión",
+        "Aporta materia orgánica, y la veza aporta nitrógeno",
+        "Puede dar forraje",
+      ],
+    },
+    data: {
+      en: ["MODIS and Landsat NDVI (bare-field periods)", "SMAP soil moisture"],
+      es: ["NDVI de MODIS y Landsat (periodos con el suelo descubierto)", "Humedad del suelo SMAP"],
+    },
+    gaps: {
+      en: ["Seed cost and sowing window", "Whether livestock could use the forage"],
+      es: ["Costo de la semilla y ventana de siembra", "Si hay ganado que pueda aprovechar el forraje"],
+    },
+    risks: {
+      en: [
+        "Little direct income unless it is used as forage",
+        "Cover crops use water, so timing matters in dry seasons",
+      ],
+      es: [
+        "Poco ingreso directo si no se usa como forraje",
+        "Los cultivos de cobertura consumen agua, así que el momento de siembra importa en temporadas secas",
+      ],
+    },
   },
   {
     id: "fallow",
-    name: "Wheat \u2192 Bare fallow",
-    summary: "A rest season with no crop.",
     scores: { water: 2, soil: 1, income: 2, resilience: 2 },
-    benefits: [
-      "Simple to manage",
-      "Can store some moisture for the next crop in dry regions",
-    ],
-    data: ["Landsat and MODIS NDVI", "SRTM elevation (slope and erosion)"],
-    gaps: ["Slope and erosion history of the field", "How much moisture the fallow actually stores"],
-    risks: [
-      "Bare soil is exposed to erosion and heat",
-      "A season without production means a season without income",
-    ],
+    name: { en: "Wheat → Bare fallow", es: "Trigo → Barbecho sin cobertura" },
+    summary: { en: "A rest season with no crop.", es: "Un ciclo de descanso, sin cultivo." },
+    benefits: {
+      en: ["Simple to manage", "Can store some moisture for the next crop in dry regions"],
+      es: ["Fácil de manejar", "En regiones secas puede guardar algo de humedad para el siguiente cultivo"],
+    },
+    data: {
+      en: ["Landsat and MODIS NDVI", "SRTM elevation (slope and erosion)"],
+      es: ["NDVI de Landsat y MODIS", "Elevación SRTM (pendiente y erosión)"],
+    },
+    gaps: {
+      en: ["Slope and erosion history of the field", "How much moisture the fallow actually stores"],
+      es: ["Pendiente e historial de erosión de la parcela", "Cuánta humedad guarda realmente el barbecho"],
+    },
+    risks: {
+      en: [
+        "Bare soil is exposed to erosion and heat",
+        "A season without production means a season without income",
+      ],
+      es: [
+        "El suelo descubierto queda expuesto a la erosión y al calor",
+        "Un ciclo sin producción es un ciclo sin ingresos",
+      ],
+    },
   },
   {
     id: "chickpea",
-    name: "Maize \u2192 Chickpea",
-    summary: "A dry-season legume follows maize.",
     scores: { water: 4, soil: 4, income: 3, resilience: 4 },
-    benefits: [
-      "Chickpea is a legume that fixes nitrogen",
-      "Often grown on stored soil moisture, so it needs less irrigation",
-      "Diversifies income",
-    ],
-    data: ["SMAP soil moisture", "GPM rainfall", "NASA POWER"],
-    gaps: ["Disease pressure in the area", "Sowing window against local rainfall"],
-    risks: [
-      "Sensitive to excess moisture and some diseases",
-      "Suitability and market access need a local check",
-    ],
+    name: { en: "Maize → Chickpea", es: "Maíz → Garbanzo" },
+    summary: { en: "A dry-season legume follows maize.", es: "Una leguminosa de temporada seca después del maíz." },
+    benefits: {
+      en: [
+        "Chickpea is a legume that fixes nitrogen",
+        "Often grown on stored soil moisture, so it needs less irrigation",
+        "Diversifies income",
+      ],
+      es: [
+        "El garbanzo es una leguminosa que fija nitrógeno",
+        "Suele cultivarse con la humedad guardada en el suelo, así que necesita menos riego",
+        "Diversifica los ingresos",
+      ],
+    },
+    data: {
+      en: ["SMAP soil moisture", "GPM rainfall", "NASA POWER"],
+      es: ["Humedad del suelo SMAP", "Lluvia GPM", "NASA POWER"],
+    },
+    gaps: {
+      en: ["Disease pressure in the area", "Sowing window against local rainfall"],
+      es: ["Presión de enfermedades en la zona", "Ventana de siembra según las lluvias locales"],
+    },
+    risks: {
+      en: [
+        "Sensitive to excess moisture and some diseases",
+        "Suitability and market access need a local check",
+      ],
+      es: [
+        "Sensible al exceso de humedad y a algunas enfermedades",
+        "La aptitud y el acceso al mercado requieren verificación local",
+      ],
+    },
   },
 ];
 
+/* Limited water makes "Save water" count more; plenty of water makes it count less. */
 const WATER_FACTOR = { low: 1.5, medium: 1, high: 0.8 };
-const WATER_LABEL = { low: "Limited", medium: "Moderate", high: "Plenty" };
 
-/* How sensitive each rotation is to water shortage, heat and frost (0 = low, 2 = high).
-   Illustrative values, to be reviewed by an agronomist. */
-const TRAITS = {
-  mono: { waterDemand: 2, heat: 1.5, frost: 1.5 },
-  beans: { waterDemand: 1, heat: 2, frost: 2 },
-  sorghum: { waterDemand: 0.5, heat: 0.5, frost: 2 },
-  cover: { waterDemand: 1, heat: 1.5, frost: 0 },
-  fallow: { waterDemand: 1, heat: 0, frost: 0 },
-  chickpea: { waterDemand: 0.5, heat: 1.5, frost: 1 },
-};
+/* ---------- 4) Field conditions ---------- */
+const POWER_URL = "https://power.larc.nasa.gov/api/temporal/climatology/point";
+const POWER_TIMEOUT_MS = 12000;
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const DEMO_CONDITIONS = { demo: true, tempC: 21.4, rainMm: 640, soilWetness: 0.45, ndvi: 0.52 };
 
-/* Adjust a rotation's ratings to this field's climate and explain why in plain language. */
-function adjustFor(rot, risks) {
-  const scores = { ...rot.scores };
-  const notes = [];
-  if (!risks) return { scores, notes };
-  const t = TRAITS[rot.id];
-  const waterShift = (1 - t.waterDemand) * risks.water;
-  const heatHit = 0.5 * t.heat * risks.heat;
-  const frostHit = 0.5 * t.frost * risks.frost;
-  scores.water = clamp(scores.water + waterShift, 1, 5);
-  scores.resilience = clamp(scores.resilience - heatHit - frostHit + 0.5 * waterShift, 1, 5);
-  if (waterShift <= -0.15) notes.push(`Needs more water than this field's ${risks.dryMonths} dry months provide.`);
-  if (waterShift >= 0.15) notes.push(`Low water needs suit this field's ${risks.dryMonths} dry months.`);
-  if (frostHit >= 0.15) notes.push(`Frost-sensitive, and ${risks.coldMonths} months here are cold enough to worry about.`);
-  if (heatHit >= 0.15) notes.push(`Sensitive to heat, and ${risks.hotMonths} months here run hot.`);
-  return { scores, notes };
+async function fetchPower(lat, lon, parameters) {
+  // URLSearchParams encodes every value, so nothing typed or clicked can
+  // change the shape of the request.
+  const query = new URLSearchParams({
+    parameters: parameters.join(","),
+    community: "AG",
+    latitude: lat.toFixed(4),
+    longitude: lon.toFixed(4),
+    format: "JSON",
+  });
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), POWER_TIMEOUT_MS);
+  try {
+    const resp = await fetch(`${POWER_URL}?${query}`, { signal: abort.signal });
+    if (!resp.ok) throw new Error(`NASA POWER responded ${resp.status}`);
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-/* ---------- 2) Field conditions (live NASA POWER + estimates) ---------- */
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
-const sumOf = (arr) => arr.reduce((a, b) => a + b, 0);
-
-const MONTH_KEYS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-/* Rules of thumb used to flag risky months. Edit them to match local knowledge. */
-const RISK = { dryMmPerMonth: 40, coldMinC: 5, hotMaxC: 33 };
-
-/* Count risky months and turn them into 0-1 stress indexes (0 = no stress, 1 = severe). */
-function assessRisks(m) {
-  const months = MONTH_LABELS.map((label, i) => ({
-    label,
-    dry: m.rainMm[i] < RISK.dryMmPerMonth,
-    cold: m.tempMinC[i] < RISK.coldMinC,
-    hot: m.tempMaxC[i] > RISK.hotMaxC,
-  }));
-  const count = (key) => months.filter((x) => x[key]).length;
-  const dryMonths = count("dry");
-  const coldMonths = count("cold");
-  const hotMonths = count("hot");
-  const annualRain = sumOf(m.rainMm);
-  return {
-    months,
-    dryMonths,
-    coldMonths,
-    hotMonths,
-    water: (clamp((dryMonths - 3) / 6, 0, 1) + clamp((900 - annualRain) / 700, 0, 1)) / 2,
-    frost: clamp(coldMonths / 4, 0, 1),
-    heat: clamp(hotMonths / 4, 0, 1),
-  };
+/* POWER climatology gives one value per month plus "ANN" for the year, and
+   uses -999 when it has no data. Returns null instead of a made-up number. */
+function annualValue(series) {
+  if (!series) return null;
+  const valid = (v) => Number.isFinite(v) && v > -900;
+  const ann = Number(series.ANN);
+  if (valid(ann)) return ann;
+  const months = MONTHS.map((m) => Number(series[m])).filter(valid);
+  return months.length === 12 ? months.reduce((a, b) => a + b, 0) / 12 : null;
 }
-
-/* Build the conditions object from 12 monthly values per variable. */
-function buildConditions(monthly, demo) {
-  const avgTemp = sumOf(monthly.tempC) / 12;
-  const annualRain = sumOf(monthly.rainMm);
-  // Soil moisture and NDVI are rough estimates from rainfall and temperature, not NASA measurements.
-  const soilMoisture = clamp((annualRain / 2500) * (1 - (avgTemp - 10) / 60), 0.05, 0.45);
-  const ndvi = clamp((annualRain / 1800) * (1 - Math.abs(avgTemp - 22) / 40), 0.1, 0.85);
-  return {
-    demo,
-    tempC: +avgTemp.toFixed(1),
-    rainMm: Math.round(annualRain),
-    soilMoisture: +soilMoisture.toFixed(2),
-    ndvi: +ndvi.toFixed(2),
-    monthly,
-    risks: assessRisks(monthly),
-  };
-}
-
-/* Typical seasonal pattern, used only when NASA POWER cannot be reached. */
-const DEMO_MONTHLY = {
-  tempC: [15, 16.5, 18.5, 20.5, 22, 22, 21, 21, 20.5, 19, 17, 15.5],
-  tempMaxC: [24, 26, 28.5, 30.5, 31.5, 29.5, 27, 27, 27, 27, 25.5, 24],
-  tempMinC: [6.5, 7, 9, 11.5, 14, 16, 15.5, 15.5, 15.5, 12.5, 9, 7],
-  rainMm: [12, 5, 5, 8, 30, 160, 200, 180, 140, 55, 12, 8],
-};
 
 async function getConditions(lat, lon) {
+  const base = ["T2M", "PRECTOTCORR"];
+  let json;
   try {
-    const url = `https://power.larc.nasa.gov/api/temporal/climatology/point?parameters=T2M,PRECTOTCORR,T2M_MAX,T2M_MIN&community=AG&latitude=${lat}&longitude=${lon}&format=JSON`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`NASA POWER request failed ${resp.status}`);
-    const json = await resp.json();
-    const params = json?.properties?.parameter;
-    // POWER climatology returns JAN..DEC plus ANN. Missing data is -999.
-    const byMonth = (obj) => MONTH_KEYS.map((key) => Number(obj?.[key]));
-    const tempC = byMonth(params?.T2M);
-    const tempMaxC = byMonth(params?.T2M_MAX);
-    const tempMinC = byMonth(params?.T2M_MIN);
-    const rainMm = byMonth(params?.PRECTOTCORR).map((mmPerDay, i) => mmPerDay * DAYS_IN_MONTH[i]); // POWER reports mm/day
-    const badTemp = [...tempC, ...tempMaxC, ...tempMinC].some((v) => !Number.isFinite(v) || v < -900);
-    const badRain = rainMm.some((v) => !Number.isFinite(v) || v < 0);
-    if (badTemp || badRain) throw new Error("Unexpected NASA POWER response");
-    return buildConditions({ tempC, tempMaxC, tempMinC, rainMm }, false);
+    try {
+      // GWETROOT = root-zone soil wetness (0 to 1), a MERRA-2 model value.
+      json = await fetchPower(lat, lon, [...base, "GWETROOT"]);
+    } catch (first) {
+      // If POWER rejects the soil parameter, still get temperature and rain.
+      console.warn("NASA POWER request with GWETROOT failed, retrying without it", first);
+      json = await fetchPower(lat, lon, base);
+    }
+
+    const series = json?.properties?.parameter ?? {};
+    const tempC = annualValue(series.T2M);
+    let rainMm = annualValue(series.PRECTOTCORR);
+    if (tempC === null || rainMm === null) throw new Error("NASA POWER returned no usable values");
+
+    // Climatology rain comes as an average in mm per day; turn it into mm per year.
+    const rainUnits = String(json?.parameters?.PRECTOTCORR?.units ?? "mm/day");
+    if (/day/i.test(rainUnits)) rainMm *= 365;
+
+    return { demo: false, tempC, rainMm, soilWetness: annualValue(series.GWETROOT), ndvi: null };
   } catch (e) {
-    console.warn('Failed to fetch NASA POWER data, using demo values', e);
-    return buildConditions(DEMO_MONTHLY, true);
+    console.warn("NASA POWER data unavailable, showing demo values", e);
+    return { ...DEMO_CONDITIONS };
   }
 }
 
 /* ---------- Helpers ---------- */
 const $ = (id) => document.getElementById(id);
-const state = { latlng: null, charts: [] };
+const state = {
+  latlng: null,     // field picked on the map
+  errorKey: null,   // I18N key of the message under the Compare button
+  last: null,       // last comparison, kept so a language switch can redraw it
+  busy: false,
+};
+
+/* Everything inserted with innerHTML passes through here, so text can never
+   become markup, even if the content later comes from an API or a user. */
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+  ));
+}
 
 function scrollBehavior() {
   const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -239,31 +536,107 @@ function scrollBehavior() {
 }
 
 function joinList(items) {
-  if (items.length < 2) return items.join("");
-  return items.slice(0, -1).join(", ") + " and " + items[items.length - 1];
+  if (typeof Intl !== "undefined" && Intl.ListFormat) {
+    return new Intl.ListFormat(prefs.lang, { style: "long", type: "conjunction" }).format(items);
+  }
+  return items.join(", ");
 }
 
-function dots(value) {
-  const n = Math.round(value);
-  return "\u25CF".repeat(n) + "\u25CB".repeat(5 - n);
+function num(value, digits) {
+  return new Intl.NumberFormat(prefs.lang, { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+}
+
+function setError(key) {
+  state.errorKey = key;
+  $("formError").textContent = key ? t(key) : "";
+}
+
+function coordsHTML() {
+  if (!state.latlng) return esc(t("noField"));
+  const { lat, lng } = state.latlng;
+  const ns = lat >= 0 ? "N" : "S";
+  const ew = lng >= 0 ? "E" : t("west");
+  return `${esc(t("fieldAt"))}<span class="axis">${Math.abs(lat).toFixed(4)}° ${ns}</span><span class="axis">${Math.abs(lng).toFixed(4)}° ${ew}</span>`;
+}
+
+function renderCoords() {
+  $("coords").innerHTML = coordsHTML();
+  $("coords").classList.toggle("has-field", Boolean(state.latlng));
+}
+
+/* ---------- Theme and language ---------- */
+function applyTheme() {
+  document.documentElement.dataset.theme = prefs.theme;
+  $("theme").setAttribute("aria-checked", String(prefs.theme === "dark"));
+}
+
+function applyLanguage() {
+  document.documentElement.lang = prefs.lang;
+  document.title = t("title");
+  document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-aria]").forEach((el) => { el.setAttribute("aria-label", t(el.dataset.i18nAria)); });
+  document.querySelectorAll(".seg button").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.lang === prefs.lang));
+  });
+
+  buildControls();
+  renderCoords();
+  if (state.busy) $("compare").textContent = t("comparing");
+  if (state.errorKey) $("formError").textContent = t(state.errorKey);
+  if (mapApi) mapApi.relabel();
+  if (state.last) renderResults(state.last.cond, state.last.items, state.last.w);
+}
+
+function initPreferences() {
+  $("theme").addEventListener("click", () => {
+    prefs.theme = prefs.theme === "dark" ? "light" : "dark";
+    store.set("fs-theme", prefs.theme);
+    applyTheme();
+  });
+
+  document.querySelectorAll(".seg button").forEach((b) => {
+    b.addEventListener("click", () => {
+      if (b.dataset.lang === prefs.lang) return;
+      prefs.lang = b.dataset.lang;
+      store.set("fs-lang", prefs.lang);
+      applyLanguage();
+    });
+  });
+
+  // Follow the system theme until the person chooses one here.
+  if (darkQuery && darkQuery.addEventListener) {
+    darkQuery.addEventListener("change", (e) => {
+      if (store.get("fs-theme")) return;
+      prefs.theme = e.matches ? "dark" : "light";
+      applyTheme();
+    });
+  }
 }
 
 /* ---------- Controls ---------- */
+/* Rebuilt on every language switch, so it carries over what was already set. */
 function buildControls() {
-  $("current").innerHTML = ROTATIONS.map((r) => `<option value="${r.id}">${r.name}</option>`).join("");
-  $("current").value = "mono";
+  const current = $("current").value || "mono";
+  const weights = {};
+  document.querySelectorAll("#priorities input[type=range]").forEach((input) => {
+    weights[input.dataset.key] = input.value;
+  });
 
-  $("priorities").innerHTML = CRITERIA.map(
-    (c) => `
+  $("current").innerHTML = ROTATIONS.map((r) => `<option value="${esc(r.id)}">${esc(pick(r.name))}</option>`).join("");
+  $("current").value = current;
+
+  $("priorities").innerHTML = CRITERIA.map((c) => {
+    const value = esc(weights[c.key] ?? "3");
+    return `
     <div class="slider">
       <div class="slider-head">
-        <label for="p-${c.key}">${c.label}</label>
-        <output id="o-${c.key}" for="p-${c.key}">3</output>
+        <label for="p-${c.key}">${esc(pick(c.label))}</label>
+        <output id="o-${c.key}" for="p-${c.key}">${value}</output>
       </div>
-      <input id="p-${c.key}" type="range" min="0" max="5" step="1" value="3" data-key="${c.key}">
-      <p class="hint">${c.hint}</p>
-    </div>`
-  ).join("");
+      <input id="p-${c.key}" type="range" min="0" max="5" step="1" value="${value}" data-key="${c.key}">
+      <p class="hint">${esc(pick(c.hint))}</p>
+    </div>`;
+  }).join("");
 
   document.querySelectorAll("#priorities input[type=range]").forEach((input) => {
     input.addEventListener("input", () => {
@@ -273,43 +646,75 @@ function buildControls() {
 }
 
 /* ---------- Map ---------- */
+let mapApi = null;
+
+const RETICLE_SVG = `
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" aria-hidden="true">
+  <circle cx="20" cy="20" r="10"/>
+  <path d="M20 2v10M20 28v10M2 20h10M28 20h10"/>
+  <circle cx="20" cy="20" r="1.5" fill="currentColor" stroke="none"/>
+</svg>`;
+
 function initMap() {
+  if (typeof L === "undefined") {
+    // Leaflet didn't arrive (offline, CDN blocked, or the integrity check failed).
+    setError("errMap");
+    return null;
+  }
+
   const map = L.map("map", { scrollWheelZoom: false }).setView([23.6, -102.5], 5);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
+    className: "base-tiles", // lets the dark theme restyle only the street map
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
 
-  // GIBS gives map images (not numbers). Level9 tiles stop at zoom 9, hence maxNativeZoom.
-  const ndviLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png', {
-    attribution: 'NASA GIBS MODIS NDVI',
-    opacity: 0.6,
-    maxNativeZoom: 9,
+  // NASA GIBS overlays: visual context only, they do not enter the score.
+  const ndviLayer = L.tileLayer("https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_NDVI_8Day_500m/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg", {
+    attribution: "NASA GIBS MODIS NDVI",
+    opacity: 0.5,
   });
-  const smapLayer = L.tileLayer('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/SMAP_L3_Passive_Enhanced_Day_Soil_Moisture/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.png', {
-    attribution: 'NASA GIBS SMAP Soil Moisture',
-    opacity: 0.6,
-    maxNativeZoom: 9,
+  const smapLayer = L.tileLayer("https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/SMAP_L3_SM_P_Grid_9km/default/2022-01-01/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg", {
+    attribution: "NASA GIBS SMAP Soil Moisture",
+    opacity: 0.5,
   });
-  L.control.layers(null, {
-    'NDVI (8\u2011day)': ndviLayer,
-    'Soil Moisture (SMAP)': smapLayer,
-  }, { collapsed: false }).addTo(map);
 
+  // The layer picker holds translated labels, so it is rebuilt per language.
+  let layerControl = null;
+  function relabel() {
+    if (layerControl) layerControl.remove();
+    layerControl = L.control.layers(null, {
+      [t("layerNdvi")]: ndviLayer,
+      [t("layerSmap")]: smapLayer,
+    }, { collapsed: false }).addTo(map);
+
+    const list = layerControl.getContainer().querySelector(".leaflet-control-layers-list");
+    const title = document.createElement("p");
+    title.className = "layers-title";
+    title.textContent = t("layersTitle");
+    const note = document.createElement("p");
+    note.className = "layers-note";
+    note.textContent = t("layersNote");
+    list.prepend(title);
+    list.append(note);
+  }
+  relabel();
+
+  const reticle = L.divIcon({ className: "reticle", html: RETICLE_SVG, iconSize: [40, 40], iconAnchor: [20, 20] });
   let marker = null;
   function setLocation(latlng) {
     state.latlng = latlng;
     if (marker) marker.setLatLng(latlng);
-    else marker = L.marker(latlng).addTo(map);
-    $("coords").textContent = `Field selected: ${latlng.lat.toFixed(4)}, ${latlng.lng.toFixed(4)}`;
-    $("formError").textContent = "";
+    else marker = L.marker(latlng, { icon: reticle, keyboard: false }).addTo(map);
+    renderCoords();
+    setError(null);
   }
 
   map.on("click", (e) => setLocation(e.latlng));
 
   $("locate").addEventListener("click", () => {
     if (!navigator.geolocation) {
-      $("formError").textContent = "Location is not available in this browser. Click the map to place your field.";
+      setError("errNoGeo");
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -318,11 +723,11 @@ function initMap() {
         setLocation(here);
         map.setView(here, 12);
       },
-      () => {
-        $("formError").textContent = "Couldn't get your location. Click the map to place your field instead.";
-      }
+      () => setError("errGeoFail")
     );
   });
+
+  return { relabel };
 }
 
 /* ---------- Scoring ---------- */
@@ -338,6 +743,7 @@ function getWeights() {
 function scoreOf(rot, w) {
   const total = CRITERIA.reduce((sum, c) => sum + w[c.key], 0);
   if (total === 0) {
+    // No priorities set: treat every criterion equally.
     const flat = CRITERIA.reduce((sum, c) => sum + rot.scores[c.key], 0);
     return Math.round((flat / (5 * CRITERIA.length)) * 100);
   }
@@ -348,348 +754,150 @@ function scoreOf(rot, w) {
 function whyText(rot, w, isCurrent) {
   const maxW = Math.max(...CRITERIA.map((c) => w[c.key]));
   const top = maxW > 0 ? CRITERIA.filter((c) => w[c.key] >= maxW * 0.8) : [];
-  const strong = top.filter((c) => rot.scores[c.key] >= 4).map((c) => c.label.toLowerCase());
-  const weak = top.filter((c) => rot.scores[c.key] <= 2).map((c) => c.label.toLowerCase());
+  const lower = (c) => pick(c.label).toLocaleLowerCase(prefs.lang);
+  const strong = top.filter((c) => rot.scores[c.key] >= 4).map(lower);
+  const weak = top.filter((c) => rot.scores[c.key] <= 2).map(lower);
 
   const parts = [];
-  if (isCurrent) parts.push("Baseline for the comparison.");
-  if (strong.length) parts.push(`Strong on what matters most to you: ${joinList(strong)}.`);
-  if (weak.length) parts.push(`Weaker on ${joinList(weak)}.`);
-  if (!strong.length && !weak.length) parts.push("A middle-of-the-road option for your priorities.");
-  if (rot.notes) parts.push(...rot.notes);
+  if (isCurrent) parts.push(t("whyBaseline"));
+  if (strong.length) parts.push(t("whyStrong", { list: joinList(strong) }));
+  if (weak.length) parts.push(t("whyWeak", { list: joinList(weak) }));
+  if (!strong.length && !weak.length) parts.push(t("whyMiddle"));
   return parts.join(" ");
 }
 
-/* ---------- SVG Ring ---------- */
-function ringSVG(score, cssClass) {
-  const r = 36;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (score / 100) * circ;
-  return `
-    <div class="ring-wrap">
-      <svg viewBox="0 0 90 90">
-        <circle class="ring-bg" cx="45" cy="45" r="${r}"/>
-        <circle class="ring-fg ${cssClass}" cx="45" cy="45" r="${r}"
-          stroke-dasharray="${circ}" stroke-dashoffset="${offset}"/>
-      </svg>
-      <div class="ring-number">${score}</div>
-    </div>`;
-}
-
 /* ---------- Rendering ---------- */
-function riskStripHTML(risks) {
-  const cells = risks.months
-    .map((m) => {
-      const flags = [
-        m.dry ? '<span class="flag flag-dry">Dry</span>' : "",
-        m.cold ? '<span class="flag flag-cold">Cold</span>' : "",
-        m.hot ? '<span class="flag flag-hot">Hot</span>' : "",
-      ].join("");
-      return `<li class="risk-cell"><span class="risk-month">${m.label}</span><span class="risk-flags">${flags || '<span class="flag-ok">OK</span>'}</span></li>`;
-    })
+function conditionsHTML(c) {
+  const src = (name) => (c.demo ? `${name}, ${t("demoSrc")}` : name);
+  const tiles = [
+    { k: t("condTemp"), v: `${num(c.tempC, 1)} °C`, src: src("NASA POWER"), d: t("condTempDesc") },
+    { k: t("condRain"), v: `${num(c.rainMm, 0)} mm`, src: src("NASA POWER"), d: t("condRainDesc") },
+    {
+      k: t("condSoil"),
+      v: c.soilWetness === null ? null : `${num(c.soilWetness * 100, 0)}%`,
+      src: src(t("condSoilSrc")),
+      d: t("condSoilDesc"),
+    },
+    {
+      k: t("condNdvi"),
+      v: c.ndvi === null ? null : num(c.ndvi, 2),
+      src: src("MODIS"),
+      d: c.ndvi === null ? t("condNdviNone") : t("condNdviDesc"),
+    },
+  ];
+  return tiles
+    .map((tile) => `
+      <div class="cond">
+        <div class="k">${esc(tile.k)}</div>
+        ${tile.v === null
+          ? `<div class="v none">${esc(t("noData"))}</div>`
+          : `<div class="v">${esc(tile.v)}</div>`}
+        <div class="src">${esc(tile.src)}</div>
+        <p class="d">${esc(tile.d)}</p>
+      </div>`)
     .join("");
-  return `
-    <ul class="risk-strip">${cells}</ul>
-    <p class="risk-note">Dry means under ${RISK.dryMmPerMonth} mm of rain in the month, cold means an average night low under ${RISK.coldMinC} \u00B0C (frost is possible), and hot means an average daytime high over ${RISK.hotMaxC} \u00B0C. These are rules of thumb based on NASA POWER monthly averages, so local conditions can differ. At this location: ${risks.dryMonths} dry, ${risks.coldMonths} cold and ${risks.hotMonths} hot months.</p>`;
 }
 
-function columnHTML(item, index, w) {
+function barsHTML(n) {
+  let segments = "";
+  for (let i = 1; i <= 5; i += 1) segments += `<i${i <= n ? ' class="on"' : ""}></i>`;
+  return `<span class="bars" role="img" aria-label="${esc(t("rateAria", { n }))}">${segments}</span>`;
+}
+
+function columnHTML(item, index, w, isBest) {
   const { rot, score, isCurrent } = item;
-  const tag = isCurrent ? "Your current rotation" : `Suggestion ${index}`;
+  const tag = isCurrent ? t("tagCurrent") : t("tagSuggestion", { n: index });
+  const bestTag = isBest && !isCurrent ? `<span class="tag best">${esc(t("tagBest"))}</span>` : "";
   const pin = Math.min(98, Math.max(2, score));
-  const list = (arr) => arr.map((t) => `<li>${t}</li>`).join("");
+  const list = (arr) => arr.map((text) => `<li>${esc(text)}</li>`).join("");
   const ratings = CRITERIA.map(
-    (c) => `<li><span>${c.label}</span><span class="dots" role="img" aria-label="${Math.round(rot.scores[c.key])} out of 5">${dots(rot.scores[c.key])}</span></li>`
+    (c) => `<li><span>${esc(pick(c.label))}</span>${barsHTML(rot.scores[c.key])}</li>`
   ).join("");
 
   return `
   <article class="col ${isCurrent ? "is-current" : ""}">
     <div class="cell head">
-      <span class="tag">${tag}</span>
-      <h3>${rot.name}</h3>
-      <p>${rot.summary}</p>
+      <div class="tags"><span class="tag">${esc(tag)}</span>${bestTag}</div>
+      <h3>${esc(pick(rot.name))}</h3>
+      <p>${esc(pick(rot.summary))}</p>
     </div>
-    <div class="cell meter" role="img" aria-label="Fit score ${score} out of 100">
-      <div class="meter-top"><strong>${score}</strong><span>out of 100</span></div>
+    <div class="cell meter" role="img" aria-label="${esc(t("fitAria", { score }))}">
+      <div class="meter-top"><strong>${score}</strong><span>${esc(t("outOf100"))}</span></div>
       <div class="track" aria-hidden="true"><i style="left:${pin}%"></i></div>
-      <div class="scale" aria-hidden="true"><span>Poor fit</span><span>Strong fit</span></div>
+      <div class="scale" aria-hidden="true"><span>${esc(t("poorFit"))}</span><span>${esc(t("strongFit"))}</span></div>
     </div>
-    <div class="cell"><h4>Why</h4><p>${whyText(rot, w, isCurrent)}</p></div>
-    <div class="cell"><h4>How it rates</h4><ul class="rates">${ratings}</ul></div>
-    <div class="cell"><h4>Benefits</h4><ul>${list(rot.benefits)}</ul></div>
-    <div class="cell"><h4>NASA data that would back this up</h4><ul class="chips">${list(rot.data)}</ul></div>
-    <div class="cell"><h4>Information gaps</h4><ul>${list(rot.gaps)}</ul></div>
-    <div class="cell risk"><h4>Risks to review locally</h4><ul>${list(rot.risks)}</ul></div>
+    <div class="cell"><h4>${esc(t("why"))}</h4><p>${esc(whyText(rot, w, isCurrent))}</p></div>
+    <div class="cell"><h4>${esc(t("rates"))}</h4><ul class="rates">${ratings}</ul></div>
+    <div class="cell"><h4>${esc(t("benefits"))}</h4><ul>${list(pick(rot.benefits))}</ul></div>
+    <div class="cell"><h4>${esc(t("nasaData"))}</h4><ul class="chips">${list(pick(rot.data))}</ul></div>
+    <div class="cell"><h4>${esc(t("gaps"))}</h4><ul>${list(pick(rot.gaps))}</ul></div>
+    <div class="cell risk"><h4>${esc(t("risks"))}</h4><ul>${list(pick(rot.risks))}</ul></div>
   </article>`;
 }
 
 function renderResults(cond, items, w) {
-  // Destroy old charts
-  state.charts.forEach(c => c.destroy());
-  state.charts = [];
-
   const best = items.reduce((a, b) => (b.score > a.score ? b : a));
-  const headline = best.isCurrent
-    ? "Your current rotation scores best for these priorities."
-    : `Best fit for your priorities: ${best.rot.name}`;
-
-  const fmt = (v, unit) => (v != null ? `${v} ${unit}` : "N/A");
-  const lat = state.latlng.lat.toFixed(4);
-  const lng = state.latlng.lng.toFixed(4);
-
-  const statusPill = cond.demo
-    ? '<span class="pill-demo">\u26A0 Demo values</span>'
-    : '<span class="pill-live">\u2713 NASA POWER data (soil moisture and NDVI estimated)</span>';
+  const headline = best.isCurrent ? t("bestCurrent") : t("bestOther", { name: pick(best.rot.name) });
+  const pill = cond.demo
+    ? `<span class="pill">${esc(t("demoPill"))}</span>`
+    : `<span class="pill live">${esc(t("livePill"))}</span>`;
 
   $("results").innerHTML = `
-    <!-- Dashboard Header -->
-    <div class="dash-header">
-      <h2>${headline}</h2>
-      <div class="dash-status">${statusPill}</div>
-    </div>
-
-    <!-- Top Grid: Details | Metrics | Progress Rings -->
-    <div class="dash-grid">
-      <!-- Details Card -->
-      <div class="dash-card">
-        <h3>Field Details</h3>
-        <div class="detail-row"><span class="detail-label">Latitude</span><span class="detail-value">${lat}</span></div>
-        <div class="detail-row"><span class="detail-label">Longitude</span><span class="detail-value">${lng}</span></div>
-        <div class="detail-row"><span class="detail-label">Current Rotation</span><span class="detail-value">${items[0].rot.name}</span></div>
-        <div class="detail-row"><span class="detail-label">Water Available</span><span class="detail-value">${WATER_LABEL[$("water").value]}</span></div>
-        <div class="detail-row"><span class="detail-label">Best Fit</span><span class="detail-value" style="color:var(--leaf)">${best.rot.name}</span></div>
-      </div>
-
-      <!-- Metrics Card -->
-      <div class="dash-card">
-        <h3>NASA Metrics</h3>
-        <div class="metrics-grid">
-          <div class="metric-tile">
-            <div class="metric-label">Avg Temperature</div>
-            <div class="metric-value">${fmt(cond.tempC, "\u00B0C")}</div>
-            <div class="metric-source">NASA POWER</div>
-            <div class="metric-note">Yearly average air temperature.</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label">Annual Rainfall</div>
-            <div class="metric-value">${fmt(cond.rainMm, "mm")}</div>
-            <div class="metric-source">NASA POWER</div>
-            <div class="metric-note">Total rain in a typical year.</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label">Soil Moisture (est.)</div>
-            <div class="metric-value">${fmt(cond.soilMoisture, "m\u00B3/m\u00B3")}</div>
-            <div class="metric-source">Estimated from NASA POWER</div>
-            <div class="metric-note">Water held in the top layer of soil. A rough estimate from rain and temperature.</div>
-          </div>
-          <div class="metric-tile">
-            <div class="metric-label">NDVI (est.)</div>
-            <div class="metric-value">${fmt(cond.ndvi, "")}</div>
-            <div class="metric-source">Estimated from NASA POWER</div>
-            <div class="metric-note">How green and healthy plants look from space, from 0 to 1. A rough estimate.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Progress Rings Card -->
-      <div class="dash-card">
-        <h3>Fit Score</h3>
-        <div class="progress-section">
-          <div class="rings-row">
-            ${items.map((item, i) => `
-              <div class="ring-item">
-                ${ringSVG(item.score, i === 0 ? 'current' : i === 1 ? 'alt1' : 'alt2')}
-                <span class="ring-label">${item.isCurrent ? 'Current' : item.rot.name.split('\u2192').pop().trim()}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Charts Row -->
-    <div class="charts-row">
-      <div class="chart-card">
-        <h3>Criteria Comparison (Radar)</h3>
-        <div class="chart-container"><canvas id="radarChart"></canvas></div>
-      </div>
-      <div class="chart-card">
-        <h3>Fit Score Comparison (Bar)</h3>
-        <div class="chart-container"><canvas id="barChart"></canvas></div>
-      </div>
-    </div>
-
-    <div class="chart-card wide">
-      <h3>Monthly climate and risky months</h3>
-      <div class="chart-container tall"><canvas id="climateChart"></canvas></div>
-      ${riskStripHTML(cond.risks)}
-    </div>
-
-    <p class="notice">This tool supports your decision and does not replace your own judgment or local agricultural advice. Check every option with local farmers or an agronomist before changing your rotation.</p>
-
-    <h3 class="section-title">Rotation comparison</h3>
-    <div class="compare">${items.map((item, i) => columnHTML(item, i, w)).join("")}</div>
-  `;
-
-  // Build Charts
-  buildCharts(items, cond);
-}
-
-/* ---------- Charts ---------- */
-function buildCharts(items, cond) {
-  if (typeof Chart === "undefined") return; // Chart.js CDN did not load: keep the rest of the results working
-  const labels = CRITERIA.map(c => c.label);
-  const colors = ['#7a4a22', '#1f7a3d', '#1f5f9e'];
-  const bgColors = ['rgba(122,74,34,0.15)', 'rgba(31,122,61,0.15)', 'rgba(31,95,158,0.15)'];
-
-  // Radar Chart
-  const radarCtx = document.getElementById('radarChart');
-  if (radarCtx) {
-    const radarChart = new Chart(radarCtx, {
-      type: 'radar',
-      data: {
-        labels: labels,
-        datasets: items.map((item, i) => ({
-          label: item.isCurrent ? `Current: ${item.rot.name}` : item.rot.name,
-          data: CRITERIA.map(c => +item.rot.scores[c.key].toFixed(1)),
-          borderColor: colors[i],
-          backgroundColor: bgColors[i],
-          borderWidth: 2.5,
-          pointRadius: 4,
-          pointBackgroundColor: colors[i],
-        })),
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { position: window.innerWidth > 1100 ? 'right' : 'bottom', labels: { font: { size: 12, family: 'Public Sans' }, usePointStyle: true } },
-        },
-        scales: {
-          r: {
-            beginAtZero: true,
-            max: 5,
-            ticks: { stepSize: 1, font: { size: 10 } },
-            pointLabels: { font: { size: 12, family: 'Public Sans', weight: '600' } },
-            grid: { color: 'rgba(0,0,0,0.06)' },
-          },
-        },
-      },
-    });
-    state.charts.push(radarChart);
-  }
-
-  // Bar Chart
-  const barCtx = document.getElementById('barChart');
-  if (barCtx) {
-    const barChart = new Chart(barCtx, {
-      type: 'bar',
-      data: {
-        labels: items.map(item => item.isCurrent ? 'Current' : item.rot.name.split('\u2192').pop().trim()),
-        datasets: [{
-          data: items.map(item => item.score),
-          backgroundColor: colors,
-          borderRadius: 6,
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: (ctx) => ` ${ctx.parsed.y} / 100` } },
-        },
-        scales: {
-          y: { min: 0, max: 100, ticks: { stepSize: 20 }, grid: { color: 'rgba(0,0,0,0.06)' } },
-          x: { grid: { display: false }, ticks: { font: { family: 'Public Sans', weight: '600' } } },
-        },
-      },
-    });
-    state.charts.push(barChart);
-  }
-
-  // Monthly climate chart: rain as bars, temperatures as lines
-  const climateCtx = document.getElementById('climateChart');
-  if (climateCtx && cond && cond.monthly) {
-    const m = cond.monthly;
-    const r1 = (v) => Math.round(v * 10) / 10;
-    const line = (label, data, color, order) => ({
-      type: 'line', label, data: data.map(r1), borderColor: color, backgroundColor: color,
-      borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yTemp', order,
-    });
-    const climateChart = new Chart(climateCtx, {
-      type: 'bar',
-      data: {
-        labels: MONTH_LABELS,
-        datasets: [
-          { type: 'bar', label: 'Rain (mm per month)', data: m.rainMm.map((v) => Math.round(v)), backgroundColor: 'rgba(31,95,158,0.35)', borderRadius: 4, yAxisID: 'yRain', order: 4 },
-          line('Highest temperature (\u00B0C)', m.tempMaxC, '#a8271c', 1),
-          line('Average temperature (\u00B0C)', m.tempC, '#7a4a22', 2),
-          line('Lowest temperature (\u00B0C)', m.tempMinC, '#1f5f9e', 3),
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { position: 'bottom', labels: { usePointStyle: true, font: { size: 12, family: 'Public Sans' } } },
-        },
-        scales: {
-          x: { grid: { display: false } },
-          yRain: { type: 'linear', position: 'left', beginAtZero: true, title: { display: true, text: 'Rain (mm per month)' }, grid: { color: 'rgba(0,0,0,0.06)' } },
-          yTemp: { type: 'linear', position: 'right', title: { display: true, text: 'Temperature (\u00B0C)' }, grid: { drawOnChartArea: false } },
-        },
-      },
-    });
-    state.charts.push(climateChart);
-  }
+    <h2 class="headline">${esc(headline)}</h2>
+    <p class="notice">${esc(t("notice"))}</p>
+    <h3 class="section-title">${esc(t("conditionsTitle"))} ${pill}</h3>
+    <div class="strip">${conditionsHTML(cond)}</div>
+    <h3 class="section-title">${esc(t("comparisonTitle"))}</h3>
+    <div class="compare">${items.map((item, i) => columnHTML(item, i, w, item === best)).join("")}</div>`;
 }
 
 /* ---------- Compare ---------- */
 async function onCompare() {
-  const error = $("formError");
-  error.textContent = "";
+  setError(null);
 
   if (!state.latlng) {
-    error.textContent = "Click the map to place a marker on your field, then compare again.";
+    setError("errNoField");
     $("map").scrollIntoView({ behavior: scrollBehavior(), block: "center" });
     return;
   }
 
   const button = $("compare");
+  state.busy = true;
   button.disabled = true;
-  button.textContent = "Comparing\u2026";
+  button.textContent = t("comparing");
 
   try {
     const cond = await getConditions(state.latlng.lat, state.latlng.lng);
     const w = getWeights();
 
-    const adjust = (r) => {
-      const a = adjustFor(r, cond.risks);
-      return { ...r, scores: a.scores, notes: a.notes };
-    };
-    const current = adjust(ROTATIONS.find((r) => r.id === $("current").value));
+    const current = ROTATIONS.find((r) => r.id === $("current").value);
     const others = ROTATIONS.filter((r) => r.id !== current.id)
-      .map((r) => adjust(r))
       .map((r) => ({ rot: r, score: scoreOf(r, w), isCurrent: false }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 2);
     const items = [{ rot: current, score: scoreOf(current, w), isCurrent: true }, ...others];
 
+    state.last = { cond, items, w };
     renderResults(cond, items, w);
     $("results").focus({ preventScroll: true });
     $("results").scrollIntoView({ behavior: scrollBehavior(), block: "start" });
   } catch (err) {
     console.error(err);
-    error.textContent = "The comparison didn't load. Check your connection and select Compare rotations again.";
+    setError("errCompare");
   } finally {
+    state.busy = false;
     button.disabled = false;
-    button.textContent = "Compare rotations";
+    button.textContent = t("compare");
   }
 }
 
 /* ---------- Start ---------- */
-buildControls();
-initMap();
-$("compare").addEventListener("click", onCompare);
+/* DOMContentLoaded fires after the page is parsed and after deferred scripts
+   (Leaflet) have run, so both the elements and L exist by then. */
+document.addEventListener("DOMContentLoaded", () => {
+  initPreferences();
+  applyTheme();
+  mapApi = initMap();
+  applyLanguage();
+  $("compare").addEventListener("click", onCompare);
+});

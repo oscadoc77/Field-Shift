@@ -3,67 +3,87 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Field Shift: crop-rotation explorer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Public+Sans:wght@400..700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=Public+Sans:wght@400..700&display=swap" rel="stylesheet">
+  <!-- integrity (SRI): the browser refuses the file if the CDN ever serves different bytes -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="styles.css">
+  <!-- app.js runs first so the saved theme and language apply before the page paints.
+       Leaflet is deferred; app.js waits for it before building the map. -->
+  <script src="app.js"></script>
+  <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body>
   <header class="top">
     <div class="brand">
       <h1>Field Shift</h1>
-      <p>Explore crop rotations with NASA Earth data</p>
+      <p data-i18n="tagline">Explore crop rotations with NASA Earth data</p>
     </div>
-    <span class="demo-flag">Demo data</span>
+
+    <div class="prefs">
+      <span class="demo-flag" data-i18n="demoFlag">Prototype</span>
+
+      <div class="seg" role="group" aria-label="Language" data-i18n-aria="langGroup">
+        <button type="button" data-lang="en" lang="en" aria-pressed="true">English</button>
+        <button type="button" data-lang="es" lang="es" aria-pressed="false">Español</button>
+      </div>
+
+      <button id="theme" class="switch" type="button" role="switch" aria-checked="false">
+        <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+        <span data-i18n="darkMode">Dark mode</span>
+      </button>
+    </div>
   </header>
 
   <main class="layout">
-    <aside class="controls" aria-label="Your field and priorities">
+    <aside class="controls" aria-label="Your field and priorities" data-i18n-aria="controlsLabel">
       <section class="step">
-        <h2><span class="num">1</span>Pick your field</h2>
-        <p class="hint">Click the map to place a marker on your field.</p>
-        <button id="locate" class="btn btn-ghost" type="button">Use my location</button>
-        <p id="coords" class="coords" aria-live="polite">No field selected yet.</p>
+        <h2><span class="num">1</span><span data-i18n="step1">Pick your field</span></h2>
+        <p class="hint" data-i18n="step1Hint">Click the map to place a marker on your field.</p>
+        <button id="locate" class="btn btn-ghost" type="button" data-i18n="useLocation">Use my location</button>
       </section>
 
       <section class="step">
-        <h2><span class="num">2</span>Your current rotation</h2>
-        <label for="current">What do you grow today?</label>
+        <h2><span class="num">2</span><span data-i18n="step2">Your current rotation</span></h2>
+        <label for="current" data-i18n="currentLabel">What do you grow today?</label>
         <select id="current"></select>
       </section>
 
       <section class="step">
-        <h2><span class="num">3</span>What matters most?</h2>
+        <h2><span class="num">3</span><span data-i18n="step3">What matters most?</span></h2>
+        <p class="hint" data-i18n="step3Hint">0 means it doesn't matter, 5 means it matters most.</p>
         <div id="priorities"></div>
-        <label for="water">Water available for the field</label>
+        <label for="water" data-i18n="waterLabel">Water available for the field</label>
         <select id="water">
-          <option value="low">Limited</option>
-          <option value="medium" selected>Moderate</option>
-          <option value="high">Plenty</option>
+          <option value="low" data-i18n="waterLow">Limited</option>
+          <option value="medium" data-i18n="waterMedium" selected>Moderate</option>
+          <option value="high" data-i18n="waterHigh">Plenty</option>
         </select>
       </section>
 
-      <button id="compare" class="btn" type="button">Compare rotations</button>
+      <button id="compare" class="btn" type="button" data-i18n="compare">Compare rotations</button>
       <p id="formError" class="error" role="alert"></p>
     </aside>
 
-    <div id="map" class="map" aria-label="Map for choosing your field"></div>
+    <div class="viewport">
+      <div id="map" class="map" aria-label="Map for choosing your field" data-i18n-aria="mapLabel"></div>
+      <p id="coords" class="readout" aria-live="polite">No field selected yet.</p>
+    </div>
 
-    <section id="results" class="results" tabindex="-1" aria-label="Rotation comparison">
+    <section id="results" class="results" tabindex="-1" aria-label="Rotation comparison" data-i18n-aria="resultsLabel">
       <div class="empty">
-        <p>Choose your field on the map, set what matters most to you, then select Compare rotations. You will see your current rotation next to two alternatives.</p>
+        <p data-i18n="empty">Choose your field on the map, set what matters most to you, then select Compare rotations. You will see your current rotation next to two alternatives.</p>
       </div>
     </section>
   </main>
 
   <footer class="foot">
-    <p>Field Shift supports your decisions and does not replace your own judgment or local agricultural advice. Scores use demo values until live NASA data is connected.</p>
+    <p data-i18n="footer">Field Shift supports your decisions and does not replace your own judgment or local agricultural advice. Crop ratings are illustrative. Field conditions come from NASA POWER when it responds; otherwise demo values are shown and labelled.</p>
   </footer>
-
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="app.js"></script>
 </body>
 </html>
