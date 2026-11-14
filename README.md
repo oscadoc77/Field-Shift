@@ -70,7 +70,7 @@ The interface was exercised in a real browser with simulated NASA responses: bot
 
 ## AI use disclosure
 
-- **Where AI was used:** Claude (Anthropic) helped draft and review the front-end code, wrote automated browser tests, helped polish the English text of the team introduction, and helped draft the illustrative crop ratings and interface text. TODO confirm: list any other AI tools the team used, for example Antigravity, and for what.
+- **Where AI was used:** Claude (Anthropic) helped draft and review the front-end code, wrote automated browser tests, helped polish the English text of the team introduction, and helped draft the illustrative crop ratings and interface text. The team also used Antigravity. TODO: add in a few words what it was used for (for example, writing or editing code in the IDE).
 - **What the team did:** TODO describe in your own words who decided the design, ran and tested the app, and reviewed the AI output.
 - **AI in the product:** none. The deployed app does not call any AI model. Recommendations come from the rule-based scoring above, applied to NASA POWER data and hand-written ratings.
 - **Review status:** AI-drafted agronomic content has not been reviewed by an agronomist (see Limitations).
